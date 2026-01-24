@@ -1,0 +1,130 @@
+body, html, #root {
+  margin: 0;
+  font-family: 'Segoe UI', sans-serif;
+  background: #0f0f0f;
+  color: #e5e5e5;
+}
+
+/* =====dashboard===== */
+.dashboard {
+  display: flex;
+  min-height: 100vh;
+  background: #0f0f0f;
+}
+
+/* ===== sidebar ===== */
+.sidebar {
+  width: 220px;
+  background-color: #1f2937;
+  min-height: 100vh;
+  padding: 20px;
+  color: white;
+}
+
+.sidebar h2 {
+  font-size: 16px;
+  margin-bottom: 25px;
+  color: #f3f4f6;
+}
+
+.sidebar-menu li {
+  margin-bottom: 12px;
+}
+
+.menu-link {
+  text-decoration: none;
+  color: white;
+  font-weight: bold;
+  padding: 6px 10px;
+  display: block;
+  border-radius: 5px;
+  font-size: 0.85rem;
+}
+
+.menu-link.active {
+  background-color: #3b82f6;
+}
+
+.logout-btn {
+  margin-top: 25px;
+  width: 100%;
+  padding: 8px;
+  background-color: #ef4444;
+  border: none;
+  color: white;
+  font-weight: bold;
+  border-radius: 5px;
+  cursor: pointer;
+  font-size: 0.85rem;
+}
+
+/* ===== main content ===== */
+.main-content {
+  flex: 1;
+  padding: 15px;
+}
+
+.icondesign {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.main-content p {
+  font-size: 0.9rem;
+  margin-bottom: 15px;
+}
+
+/* ===== stats ===== */
+.stats-grid {
+  display: flex;
+  gap: 15px;
+  margin-bottom: 15px;
+}
+
+.stats-card {
+  flex: 1;
+  background: #1a1a1a;
+  padding: 15px;
+  border-radius: 8px;
+  font-size: 0.85rem;
+}
+
+/* ===== charts ===== */
+/* ===== charts ===== */
+.charts {
+  display: flex;
+  gap: 15px;
+  margin-bottom: 15px;
+  flex-wrap: wrap;
+  justify-content: space-between;
+}
+
+.chart {
+  flex: 1 1 500px;
+  max-width: 700px; 
+  height: 450px; 
+  padding: 15px;
+  border-radius: 8px;
+  font-size: 0.85rem;
+}
+
+
+/* ===== recent alerts ===== */
+.recent-alerts h3 {
+  font-size: 1rem;
+  margin-bottom: 10px;
+}
+
+.recent-alerts table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 0.85rem;
+}
+
+.recent-alerts th,
+.recent-alerts td {
+  padding: 6px 8px;
+  border-bottom: 1px solid #2a2a2a;
+  color: #d4d4d4;
+}
