@@ -2,62 +2,51 @@ import { useState, useEffect } from "react";
 import { useNavigate } from "react-router-dom";
 import "./Login.css";
 
-export default function Login() {
-  const navigate = useNavigate();
+import React from 'react'
 
+export default function Login_page() {
+  const navigate = useNavigate();
   const [username, setUsername] = useState("");
   const [password, setPassword] = useState("");
   const [error, setError] = useState("");
   const [loading, setLoading] = useState(false);
 
-  // Check if user is already logged in
   useEffect(() => {
-    const token = localStorage.getItem("access_token");
-    if (token) {
-      navigate("/dashboard");
-    }
+    const storedUser = localStorage.getItem("username");
+    if (storedUser) navigate("/dashpage");
   }, [navigate]);
 
-  const handleSubmit = async (e) => {
+  const handleSubmit = (e) => {
     e.preventDefault();
     setLoading(true);
     setError("");
 
-    try {
-      
-        const apiUrl = import.meta.env.VITE_API_URL || "http://127.0.0.1:5000";
+    const USERS = [
+      { username: "admin", password: "admin", role: "admin" },
+      { username: "user1", password: "1234", role: "user" },
+    ];
 
-    const res = await fetch(`${apiUrl}/api/auth/login`, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ username, password }),
-    });
+    const user = USERS.find(
+      (u) => u.username === username && u.password === password
+    );
 
-
-      const data = await res.json();
-
-      if (!res.ok) {
-        throw new Error(data.message || "Login failed");
-      }
-
-      // Save token and role
-      localStorage.setItem("access_token", data.access_token);
-      localStorage.setItem("role", data.role);
-
-      navigate("/dashboard");
-    } catch (err) {
-      console.error(err);
-      setError(err.message || "Cannot connect to server");
-    } finally {
+    if (!user) {
+      setError("Invalid username or password");
       setLoading(false);
+      return;
     }
+
+    localStorage.setItem("username", user.username);
+    localStorage.setItem("role", user.role);
+
+    setLoading(false);
+    navigate("/dashboardpage");
   };
 
   return (
     <div className="login-container">
       <div className="login-card">
         <h2>AI-IDS/IPS System</h2>
-
         <form onSubmit={handleSubmit}>
           <input
             placeholder="Username"
@@ -70,9 +59,7 @@ export default function Login() {
             value={password}
             onChange={(e) => setPassword(e.target.value)}
           />
-
           {error && <p className="error">{error}</p>}
-
           <button type="submit" disabled={loading}>
             {loading ? "Signing in..." : "Sign In"}
           </button>
@@ -80,4 +67,5 @@ export default function Login() {
       </div>
     </div>
   );
+
 }

@@ -1,0 +1,39 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <title>Host Dashboard</title>
+  <style>
+    table { border-collapse: collapse; width: 80%; margin: auto; }
+    th, td { border: 1px solid #000; padding: 8px; text-align: center; }
+    th { background-color: #333; color: #fff; }
+    .Safe { background-color: #8f8; }
+    .High { background-color: #f88; }
+  </style>
+</head>
+<body>
+  <h1 style="text-align:center;">Host Dashboard</h1>
+  <table>
+    <tr>
+      <th>ID</th>
+      <th>Host Name</th>
+      <th>CPU %</th>
+      <th>Memory %</th>
+      <th>Disk %</th>
+      <th>Timestamp</th>
+      <th>Analysis</th>
+    </tr>
+    {% for host in hosts %}
+    <tr class="{{ 'High' if 'High' in host[6] else 'Safe' }}">
+      <td>{{ host[0] }}</td>
+      <td>{{ host[1] }}</td>
+      <td>{{ host[2] }}</td>
+      <td>{{ host[3] }}</td>
+      <td>{{ host[4] }}</td>
+      <td>{{ host[5] }}</td>
+      <td>{{ host[6] }}</td>
+    </tr>
+    {% endfor %}
+  </table>
+</body>
+</html>

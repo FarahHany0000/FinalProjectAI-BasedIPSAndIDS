@@ -1,6 +1,7 @@
 import React from 'react';
 import { NavLink, useNavigate } from 'react-router-dom';
 
+
 export default function Sidebar() {
   const navigate = useNavigate();
   const handleLogout = () => {
@@ -16,7 +17,7 @@ export default function Sidebar() {
         <ul className="sidebar-menu">
           <li>
             <NavLink 
-              to="/dashboard" 
+              to="/dashboardpage" 
               className={({ isActive }) => isActive ? "menu-link active" : "menu-link"}
             >
               Review
@@ -38,7 +39,7 @@ export default function Sidebar() {
               Host
             </NavLink>
           </li>
-          <li>
+          {/* <li>
             <NavLink 
               to="/scanner" 
               className={({ isActive }) => isActive ? "menu-link active" : "menu-link"}
@@ -53,7 +54,7 @@ export default function Sidebar() {
             >
               Update Model
             </NavLink>
-          </li>
+          </li> */}
         </ul>
       </nav>
       <button className="logout-btn" onClick={handleLogout}>
