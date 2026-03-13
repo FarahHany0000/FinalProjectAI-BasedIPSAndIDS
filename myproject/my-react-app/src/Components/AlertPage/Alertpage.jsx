@@ -17,8 +17,8 @@ export default function AlertsPage() {
     if (severity === "Critical") return "Host Isolated";
     if (type === "DDoS Attack") return "Traffic Dropped";
     if (type === "Port Scan") return "IP Blacklisted";
-    if (type === "Malware Detection") return "Connection Reset";
-    if (type === "SQL Injection") return "Connection Reset";
+    if (type === "Malware Detection") return "Traffic Dropped";
+    if (type === "SQL Injection") return "Traffic Dropped";
     if (type === "Brute Force") return "Account Locked";
     return "Connection Reset";
   };

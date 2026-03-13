@@ -5,39 +5,20 @@ import { useNavigate } from 'react-router-dom';
 export default function Logsattack() {
   const navigate = useNavigate();
 
-  // Mock logs with full details
-  const fakeLogs = [
-    {
-      id: "LOG-001",
-      type: "DDoS Attack",
-      time: "2026-03-04 14:32:15",
-      source: "192.168.1.105",
-      destination: "10.0.0.1",
-      connection: "Online",
-      action: "Traffic Dropped",
-      status: "Blocked"
-    },
-    {
-      id: "LOG-002",
-      type: "Malware Detection",
-      time: "2026-03-04 13:45:10",
-      source: "PC-03",
-      destination: "203.0.113.100",
-      connection: "Offline",
-      action: "Connection Reset",
-      status: "Detected"
-    },
-    {
-      id: "LOG-003",
-      type: "Port Scan",
-      time: "2026-03-04 12:22:50",
-      source: "10.0.0.45",
-      destination: "10.0.0.2",
-      connection: "Online",
-      action: "IP Blacklisted",
-      status: "Blocked"
-    },
-  ];
+  useEffect(()=>{
+
+fetch("http://localhost:5000/api/logs",{
+
+headers:{
+Authorization:"Bearer "+localStorage.getItem("access_token")
+}
+
+})
+.then(res=>res.json())
+.then(data=>setLogs(data))
+
+},[])
+  
 
   return (
     <div className="dashboard">

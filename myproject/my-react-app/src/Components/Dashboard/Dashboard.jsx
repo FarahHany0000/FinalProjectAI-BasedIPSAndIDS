@@ -48,18 +48,17 @@ export default function Dashboard() {
 
   // =============================== Add New Events after Scan ===============================
   useEffect(() => {
-    if (!scanNetwork) return; // لما يكون فيه scan جديد
+    if (!scanNetwork) return; 
 
-    // نضيف بيانات جديدة (simulated example)
     const newEvents = contextEvents.map(e => ({
       ...e,
-      date: new Date().toISOString().split("T")[0] // تاريخ اليوم
+      date: new Date().toISOString().split("T")[0] 
     }));
 
-    // تحديث الـ state مع الحفاظ على البيانات القديمة
+  
     setEvents(prev => [...prev, ...newEvents]);
 
-    // تحديث hosts لو في أي تغييرات
+   
     const newHosts = contextHosts.filter(h => !hosts.find(existing => existing.name === h.name));
     if (newHosts.length > 0) setHosts(prev => [...prev, ...newHosts]);
 

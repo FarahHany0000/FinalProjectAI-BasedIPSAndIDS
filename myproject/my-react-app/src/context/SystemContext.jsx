@@ -52,11 +52,11 @@ export const SystemProvider = ({ children }) => {
 
     
     setToastMessage("Network Scan Completed Successfully!");
-    setTimeout(() => setToastMessage(""), 5000);
+    setTimeout(() => setToastMessage(""),1000000);
   };
 
   useEffect(() => {
-    const interval = setInterval(scanNetwork, 20000);
+    const interval = setInterval(scanNetwork, 10000000);
     return () => clearInterval(interval);
   }, [hosts]);
 

@@ -34,10 +34,13 @@
   text-align: center;
    justify-content: space-between;
 
+
 }
 .stat-card h2 {
   margin: 0px 0 0;
   padding: 0px 0 0 0;
+  
+  
 }
 
 .stat-card.warning {
@@ -54,7 +57,7 @@
   padding: 20px;
   border-radius: 12px;
   width: 100%;          
-  max-width: 1200px;    
+  
   margin: 0 auto;       
 }
 
@@ -68,7 +71,7 @@ table {
 }
 
 th, td {
-  padding: 12px;
+ 
   border-bottom: 1px solid #2a2a2a;
   font-size: 30px;
 }
@@ -81,7 +84,7 @@ th {
 /* ===== STATUS BADGES ===== */
 td .badge {
   display: block;           
-  font-size: 20px;          
+  font-size: 25px;          
   padding: 8px;
   border-radius: 8px;
 }
