@@ -1,75 +1,87 @@
 import React, { useEffect, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import Sidebar from "../Sidebar/Sidebar";
-import "./host.css";
+import "./Host.css";
 
 export default function Host() {
   const [hosts, setHosts] = useState([]);
-  const [selectedHost, setSelectedHost] = useState(null);
   const navigate = useNavigate();
 
+  const fetchHosts = () => {
+    fetch("http://localhost:5000/api/hosts")
+      .then((res) => res.json())
+      .then((data) => setHosts(data))
+      .catch((err) => console.error("❌ Fetch Error:", err));
+  };
+
   useEffect(() => {
-    const interval = setInterval(() => {
-      fetch("http://localhost:5000/api/hosts")
-        .then(res => res.ok ? res.json() : [])
-        .then(data => setHosts(Array.isArray(data) ? data : []))
-        .catch(err => console.error(err));
-    }, 3000);
+    fetchHosts();
+    const interval = setInterval(fetchHosts, 3000); 
     return () => clearInterval(interval);
   }, []);
 
-  return (
-    <div className="dashboard" style={{ display: "flex" }}>
-      <Sidebar/>
-      <div className="main-content">
-        <h1> Host Monitoring</h1>
+  const checkOnlineStatus = (lastSeen) => {
+    if (!lastSeen) return false;
+    const lastSeenDate = new Date(lastSeen);
+    const now = new Date();
+    return (now - lastSeenDate) / 1000 < 30;
+  };
 
+  return (
+    <div className="dashboard">
+      <Sidebar />
+      <div className="main-content">
+        <h1> Hosts Real-time Monitoring</h1>
         <table className="host-table">
           <thead>
             <tr>
-              <th>Name</th>
-              <th>IP</th>
+              <th>Host Name</th>
+              <th>IP Address</th>
               <th>Status</th>
-              <th>Current Threat</th>
-              
-              <th>Actions</th>
+              <th>Last Seen</th>
+              <th>Action Taken</th> {/* العمود الجديد */}
+              <th>Details</th>      {/* عمود الزر فقط */}
             </tr>
           </thead>
           <tbody>
-            {hosts.map((h, i) => (
-              <tr key={i} className={h.threats !== "None" ? "attack-row" : ""}>
-                <td>{h.host_name}</td>
-                <td>{h.ip}</td>
-                <td className={h.status === "Online" ? "host-online" : "host-offline"}>
-                   {h.status}
-                </td>
-                <td className={h.threats !== "None" ? "attack" : "safe"}>{h.threats}</td>
-                <td className={h.action?.includes("Blocked") ? "badge-blocked" : "badge-safe"}>
-                  {h.action || "No Action"}
-                </td>
-               
-              </tr>
-            ))}
+            {hosts.map((h, i) => {
+              const isOnline = checkOnlineStatus(h.last_seen);
+              const currentHostName = h.host_name || h.host; 
+              
+              // نتحقق إذا كان هناك إجراء حظر أو منع مسجل لهذا الجهاز
+              const hasPrevention = h.action && h.action !== "No Action";
+
+              return (
+                <tr key={i} className={!isOnline ? "offline-row" : ""}>
+                  <td><strong>{currentHostName}</strong></td>
+                  <td>{h.ip}</td>
+                  <td>
+                    <span className={`status-badge ${isOnline ? "online" : "offline"}`}>
+                      {isOnline ? "● Online" : "○ Offline"}
+                    </span>
+                  </td>
+                  <td>{h.last_seen ? new Date(h.last_seen).toLocaleTimeString() : "N/A"}</td>
+                  
+                  {/* عرض حالة الإجراء الوقائي */}
+                  <td>
+                    <span className={hasPrevention ? "prevention-active" : "prevention-none"}>
+                      {hasPrevention ? ` ${h.action}` : " No Threats"}
+                    </span>
+                  </td>
+
+                  <td>
+                    <button 
+                      className="view-logs-btn" 
+                      onClick={() => navigate(`/host/${currentHostName}`)}
+                    >
+                      View Details
+                    </button>
+                  </td>
+                </tr>
+              );
+            })}
           </tbody>
         </table>
-
-        <button className="logs-btn" style={{ marginTop: "20px" }}
-          onClick={() => navigate("/logs")}>
-          Go to Attack Logs
-        </button>
-
-        {/* Modal for selected host */}
-        {selectedHost && (
-          <div className="modal">
-            <h2> Attack Analysis: {selectedHost.host_name}</h2>
-            <hr />
-            <p><strong>Threat Type:</strong> {selectedHost.threats}</p>
-            <p><strong>Action Taken:</strong> {selectedHost.action || "No Action"}</p>
-            <p><strong>CPU:</strong> {selectedHost.cpu}% | <strong>RAM:</strong> {selectedHost.memory}%</p>
-            <p><strong>Additional Info:</strong> {selectedHost.info || "N/A"}</p>
-            <button onClick={() => setSelectedHost(null)}>Close</button>
-          </div>
-        )}
       </div>
     </div>
   );

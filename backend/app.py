@@ -1,106 +1,171 @@
+import os
+import sys
 import datetime
+import platform
+import subprocess
+import numpy as np
 from flask import Flask, request, jsonify
 from flask_sqlalchemy import SQLAlchemy
 from flask_cors import CORS
 
+
+AI_MODELS_PATH = r"C:\Users\HANY\Desktop\frontend\backend\ai_models"
+sys.path.append(AI_MODELS_PATH)
+
+
+try:
+    from cnn_pipeline import CNNPipeline
+    model_pipeline = CNNPipeline()
+except ImportError:
+    print("Error: cnn_pipeline.py not found in the specified path.")
+    model_pipeline = None
+
+
 app = Flask(__name__)
+CORS(app)
 
-# تفعيل CORS للسماح للفرونت إند بالوصول بدون قيود
-CORS(app, resources={r"/api/*": {"origins": "*"}})
-
-# ================= DATABASE CONFIG (SQLite) =================
-# هنا الحل السحري: لا سيرفر، لا بورت، ولا باسوورد. ملف صغير هيحل كل المشاكل.
-app.config['SQLALCHEMY_DATABASE_URI'] = 'sqlite:///ids_project.db'
+app.config['SQLALCHEMY_DATABASE_URI'] = 'sqlite:///ids.db'
 app.config['SQLALCHEMY_TRACK_MODIFICATIONS'] = False
-
 db = SQLAlchemy(app)
 
-# ================= MODELS =================
+AGENT_KEY = "mysecrettoken"
+NUM_FEATURES = 15 
+
+
 class Host(db.Model):
-    __tablename__ = 'hosts'
     id = db.Column(db.Integer, primary_key=True)
-    name = db.Column(db.String(50))
-    ip = db.Column(db.String(50), unique=True)
-    cpu = db.Column(db.Float, default=0)
-    memory = db.Column(db.Float, default=0)
-    disk = db.Column(db.Float, default=0)
-    network = db.Column(db.Float, default=0)
-    status = db.Column(db.String(20), default="Offline")
-    threats = db.Column(db.String(200), default="None")
-    last_seen = db.Column(db.DateTime, default=datetime.datetime.utcnow)
-
-class HostLog(db.Model):
-    __tablename__ = 'host_logs'
-    id = db.Column(db.Integer, primary_key=True)
-    host_id = db.Column(db.Integer)
+    host_name = db.Column(db.String(100), nullable=False)
+    ip = db.Column(db.String(100))
+    last_seen = db.Column(db.DateTime)
     status = db.Column(db.String(20))
+
+class Alert(db.Model):
+    id = db.Column(db.Integer, primary_key=True)
+    host_name = db.Column(db.String(100))
+    ip = db.Column(db.String(100))
+    threat_type = db.Column(db.String(100))
+    severity = db.Column(db.String(20))
     action = db.Column(db.String(100))
-    attack_type = db.Column(db.String(100))
-    time = db.Column(db.DateTime, default=datetime.datetime.utcnow)
+    time = db.Column(db.DateTime)
 
-# ================= INITIALIZE =================
-with app.app_context():
+
+def block_ip(ip):
+    """تنفيذ الحظر على مستوى نظام التشغيل"""
     try:
-        db.create_all()
-        print("✅✅✅ Success: SQLite Database Ready! Forget SQL Server Errors.")
+        system = platform.system()
+        if system == "Windows":
+         
+            cmd = f'netsh advfirewall firewall add rule name="BLOCK_{ip}" dir=in action=block remoteip={ip}'
+            subprocess.run(cmd, shell=True, check=True)
+            print(f" IP {ip} has been blocked in Windows Firewall.")
+        elif system == "Linux":
+            cmd = f"sudo iptables -A INPUT -s {ip} -j DROP"
+            subprocess.run(cmd, shell=True, check=True)
+            print(f" IP {ip} has been blocked in Iptables.")
     except Exception as e:
-        print(f"❌ Error: {e}")
+        print(f" Error blocking IP {ip}: {e}")
 
-# ================= ROUTES =================
+def classify_threat(pred):
+    """
+    بما أن الموديل يخرج قيمة واحدة (Dense 1):
+    0 تعني Normal
+    1 تعني Attack
+    """
+  
+    val = pred[0] if isinstance(pred, (list, np.ndarray)) else pred
+    
+ 
+    final_decision = 1 if val >= 0.5 else 0
+    
+    if final_decision == 0:
+        return ("Normal", "Low")
+    else:
+   
+        return ("Cyber Attack Detected", "High")
+@app.route("/api/agent/host-report", methods=["POST"])
+def agent_report():
+    # التحقق من مفتاح الأمان
+    if request.headers.get("X-Agent-Key") != AGENT_KEY:
+        print("⚠️ Unauthorized access attempt blocked.")
+        return jsonify({"error": "Unauthorized"}), 401
+
+    data = request.json
+    host_name = data.get("host_name")
+    ip = data.get("ip")
+    features = data.get("features")
+    current_time = datetime.datetime.now()
+
+    # --- [Console Logging] بداية طباعة المعلومات في السيرفر ---
+    print("\n" + "="*50)
+    print(f"🕒 Time: {current_time.strftime('%Y-%m-%d %H:%M:%S')}")
+    print(f"🖥️  Host: {host_name} ({ip})")
+    print(f"📡 Status: ONLINE ✅")
+    print("-" * 30)
+
+    # 1. تحديث قاعدة البيانات
+    host = Host.query.filter_by(host_name=host_name).first()
+    if not host:
+        host = Host(host_name=host_name, ip=ip, last_seen=current_time, status="Online")
+        db.session.add(host)
+    else:
+        host.last_seen = current_time
+        host.status = "Online"
+        host.ip = ip
+
+    # 2. التنبؤ عبر الـ CNN
+    threat, severity = "Normal", "Low"
+    action = "No Action Taken"
+
+    if model_pipeline and features:
+        prediction = model_pipeline.predict(features)
+        threat, severity = classify_threat(prediction)
+        
+        # طباعة نتيجة تحليل الذكاء الاصطناعي
+        print(f"🧠 AI Analysis: {threat} | Severity: {severity}")
+
+    # 3. اتخاذ القرار (Prevention Logic)
+    if severity in ["High", "Critical"]:
+        action = "PREVENTION ACTIVE: IP Blocked 🚫"
+        print(f"🛑 CRITICAL: Executing actual prevention on IP: {ip}")
+        block_ip(ip) # استدعاء دالة جدار الحماية
+    
+        new_alert = Alert(
+            host_name=host_name, ip=ip, threat_type=threat, 
+            severity=severity, action=action, time=current_time
+        )
+        db.session.add(new_alert)
+    else:
+        print(f"Safe: No threats detected. No action needed.")
+
+    print(f" Final Action: {action}")
+    print("="*50 + "\n")
+
+    db.session.commit()
+    return jsonify({
+        "status": "Success", 
+        "threats": threat, 
+        "severity": severity, 
+        "action": action,
+        "time": current_time.isoformat()
+    })
 @app.route("/api/hosts", methods=["GET"])
 def get_hosts():
-    try:
-        all_hosts = Host.query.all()
-        now = datetime.datetime.utcnow()
-        results = []
-        for h in all_hosts:
-            # الجهاز يعتبر Online لو بعت داتا في آخر 30 ثانية
-            is_active = (now - h.last_seen).total_seconds() < 30
-            results.append({
-                "id": h.id,
-                "host_name": h.name,
-                "ip": h.ip,
-                "cpu": h.cpu,
-                "memory": h.memory,
-                "disk": h.disk,
-                "network": h.network,
-                "status": "Online" if is_active else "Offline",
-                "threats": h.threats
-            })
-        return jsonify(results)
-    except Exception as e:
-        return jsonify([])
+    hosts = Host.query.all()
+    return jsonify([{"host": h.host_name, "ip": h.ip, "status": h.status, "last_seen": h.last_seen} for h in hosts])
 
-@app.route("/api/agent/host-report", methods=["POST"])
-def host_report():
-    data = request.get_json()
-    try:
-        host = Host.query.filter_by(ip=data["ip"]).first()
-        if not host:
-            host = Host(name=data.get("host_name", "Unknown"), ip=data["ip"])
-            db.session.add(host)
-            db.session.flush()
+@app.route("/api/alerts", methods=["GET"])
+def get_alerts():
+    alerts = Alert.query.order_by(Alert.time.desc()).all()
+    return jsonify([{
+        "host": a.host_name, "ip": a.ip, "threat": a.threat_type, 
+        "severity": a.severity, "action": a.action, "time": a.time
+    } for a in alerts])
 
-        host.cpu = data.get("cpu", 0)
-        host.memory = data.get("memory", 0)
-        host.disk = data.get("disk", 0)
-        host.network = data.get("network", 0)
-        host.threats = data.get("attack_type", "None")
-        host.last_seen = datetime.datetime.utcnow()
-        host.status = "Online"
-
-        new_log = HostLog(
-            host_id=host.id,
-            status=data.get("status", "Safe"),
-            attack_type=data.get("attack_type", "None"),
-            action=data.get("action", "Alerted")
-        )
-        db.session.add(new_log)
-        db.session.commit()
-        return jsonify({"status": "success"})
-    except Exception as e:
-        db.session.rollback()
-        return jsonify({"status": "error", "message": str(e)}), 500
 
 if __name__ == "__main__":
-    app.run(port=5000, debug=True)
+    with app.app_context():
+        # إنشاء الجداول
+        db.create_all()
+        print("Database initialized and tables created.")
+    
+    app.run(host='0.0.0.0', port=5000, debug=True)

@@ -22,9 +22,9 @@ function App() {
         <Route 
           path="/dashboardpage" 
           element={
-            <ProtectedRoute>
+            // <ProtectedRoute>
               <Dashboard />
-            </ProtectedRoute>
+            // </ProtectedRoute>
           } 
         />
         <Route 
@@ -41,6 +41,7 @@ function App() {
         <Route path='/alert/logs' element={<LogsAttack />} />
          <Route path="/logs" element={<HostLogs />} />
         <Route path='/alert/attackdetail' element={<Attackdetail />} />
+        <Route path="/host/:host_name" element={<HostLogs />} />
 
         {/* Uncomment when ready */}
         {/* <Route path='/scanner' element={<Scanner />} />
