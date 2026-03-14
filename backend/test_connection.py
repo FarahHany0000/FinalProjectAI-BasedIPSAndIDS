@@ -1,24 +1,11 @@
-import pyodbc
+import numpy as np
 
+feature_file = r"C:\Users\HANY\Desktop\frontend\backend\ai_models\feature_names.npy"
+feature_names = np.load(feature_file, allow_pickle=True)
+print("Features expected by model (in order):")
+print(feature_names)
+print("Number of features expected:", len(feature_names))
+from cnn_pipeline import CNNPipeline  
 
-payload = {
-    "host_name": "TestHost",
-    "ip": "192.168.1.10",
-    "cpu": 95,
-    "memory": 90,
-    "disk": 80,
-    "network": 5000,
-    "processes": 120,
-    "connections": 50,
-    "attack_type": "DOS",
-    "action": "BLOCKED"
-}
-
-try:
-    response = requests.post(API_URL, json=payload, headers={"X-Agent-Key": AGENT_KEY}, timeout=5)
-    if response.status_code == 200:
-        print("✔ API test successful, data sent!")
-    else:
-        print(f"⚠ API returned status: {response.status_code}, content: {response.text}")
-except Exception as e:
-    print("❌ Could not send API request:", e)
+MODEL_PATH = r"C:\Users\HANY\Desktop\frontend\backend\ai_models\cnn_complete_pipeline.pkl"
+model = joblib.load(MODEL_PATH)

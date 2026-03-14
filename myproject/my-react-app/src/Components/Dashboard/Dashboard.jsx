@@ -16,7 +16,8 @@ export default function Dashboard() {
   const initialEvents = [
     { date: "2026-03-01", type: "DDoS", host: "Host-1", severity: "High" },
     { date: "2026-03-02", type: "Malware", host: "Host-2", severity: "Critical" },
-    { date: "2026-03-03", type: "Phishing", host: "Host-3", severity: "Medium" }
+    { date: "2026-03-03", type: "Phishing", host: "Host-3", severity: "Medium" },
+    { date: "2026-03-04", type: "Spam", host: "Host-1", severity: "Low" }
   ];
 
   // =============================== Local State ===============================
@@ -34,35 +35,34 @@ export default function Dashboard() {
     }
   };
 
-  const processedEvents = events.map((event) => ({
-    ...event,
-    action: generateAction(event.severity),
-    finalState: event.severity === "Critical" ? "Offline" : "Online"
-  }));
-
-  // =============================== Stats ===============================
-  const totalThreats = processedEvents.length;
-  const criticalThreats = processedEvents.filter(e => e.severity === "Critical").length;
-  const activeHosts = hosts.filter(h => h.status === "Online").length;
-  const isolatedHosts = processedEvents.filter(e => e.finalState === "Offline").length;
-
   // =============================== Add New Events after Scan ===============================
   useEffect(() => {
-    if (!scanNetwork) return; 
+    if (!scanNetwork) return;
 
-    const newEvents = contextEvents.map(e => ({
-      ...e,
-      date: new Date().toISOString().split("T")[0] 
-    }));
+    const newEvents = contextEvents
+      .filter(e => !events.find(ev => ev.date === e.date && ev.host === e.host && ev.type === e.type))
+      .map(e => ({
+        ...e,
+        date: new Date().toISOString().split("T")[0]
+      }));
 
-  
-    setEvents(prev => [...prev, ...newEvents]);
+    if (newEvents.length > 0) setEvents(prev => [...prev, ...newEvents]);
 
-   
     const newHosts = contextHosts.filter(h => !hosts.find(existing => existing.name === h.name));
     if (newHosts.length > 0) setHosts(prev => [...prev, ...newHosts]);
 
-  }, [scanNetwork, contextEvents, contextHosts, hosts]);
+  }, [scanNetwork, contextEvents, contextHosts, hosts, events]);
+
+  // =============================== Stats ===============================
+  const allEvents = events; // كل الأحداث الحالية بعد الدمج
+  const totalThreats = allEvents.length;
+  const criticalThreats = allEvents.filter(e => e.severity === "Critical").length;
+  const highThreats = allEvents.filter(e => e.severity === "High").length;
+  const mediumThreats = allEvents.filter(e => e.severity === "Medium").length;
+  const lowThreats = allEvents.filter(e => e.severity === "Low").length;
+
+  const activeHosts = hosts.filter(h => h.status === "Online").length;
+  const isolatedHosts = allEvents.filter(e => e.severity === "Critical" || e.severity === "High").length;
 
   // =============================== Render ===============================
   return (
@@ -112,6 +112,21 @@ export default function Dashboard() {
           </div>
 
           <div className="stat-card">
+            <h4>High Attacks</h4>
+            <p className="severity-high">{highThreats}</p>
+          </div>
+
+          <div className="stat-card">
+            <h4>Medium Attacks</h4>
+            <p className="severity-medium">{mediumThreats}</p>
+          </div>
+
+          <div className="stat-card">
+            <h4>Low Attacks</h4>
+            <p className="severity-low">{lowThreats}</p>
+          </div>
+
+          <div className="stat-card">
             <h4>Active Hosts</h4>
             <p className="host-online">{activeHosts}</p>
           </div>
@@ -136,14 +151,16 @@ export default function Dashboard() {
               </tr>
             </thead>
             <tbody>
-              {processedEvents.map((event, idx) => (
+              {allEvents.map((event, idx) => (
                 <tr key={idx}>
                   <td>{event.date}</td>
                   <td>{event.type}</td>
                   <td>{event.host}</td>
                   <td className={`severity-${event.severity.toLowerCase()}`}>{event.severity}</td>
-                  <td>{event.action}</td>
-                  <td className={`host-${event.finalState.toLowerCase()}`}>{event.finalState}</td>
+                  <td>{generateAction(event.severity)}</td>
+                  <td className={`host-${event.severity === "Critical" || event.severity === "High" ? "offline" : "online"}`}>
+                    {event.severity === "Critical" || event.severity === "High" ? "Offline" : "Online"}
+                  </td>
                 </tr>
               ))}
             </tbody>

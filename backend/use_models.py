@@ -1,35 +1,20 @@
 import numpy as np
-from sklearn.base import BaseEstimator
 
-class CNNPipeline(BaseEstimator):
+class CNNPipeline:
 
-    def __init__(self, model=None, scaler=None, encoder=None):
-        self.model = model
+    def __init__(self, scaler=None, model=None):
         self.scaler = scaler
-        # self.encoder = encoder   # لازم يكون موجود
+        self.model = model
 
     def predict(self, X):
 
-        # لو 3D نحوله لـ 2D
-        if len(X.shape) == 3:
-            X = X.reshape(X.shape[0], X.shape[2])
-
-        # scaling لو موجود
-        if hasattr(self, "scaler") and self.scaler is not None:
+        if self.scaler is not None:
             X = self.scaler.transform(X)
 
-        # reshape للـ CNN
-        X = X.reshape(X.shape[0], 1, X.shape[1])
+        if self.model is not None:
+            X = X.reshape((X.shape[0], X.shape[1], 1))
+            pred = self.model.predict(X)
 
-        preds = self.model.predict(X)
+            return (pred > 0.5).astype(int)
 
-        # لو فيه encoder نستخدمه
-        if hasattr(self, "encoder") and self.encoder is not None:
-            preds = np.argmax(preds, axis=1)
-            return self.encoder.inverse_transform(preds)
-
-        # لو مفيش encoder نرجع index
-        if preds.ndim > 1:
-            preds = np.argmax(preds, axis=1)
-
-        return preds
+        return np.array([[0]])
