@@ -12,10 +12,13 @@
 #   - No DNS lookups to external services
 #   - Reuses TCP connection via requests.Session (keep-alive)
 #   - Minimal footprint: psutil + requests only
+#   - Graceful shutdown on Ctrl+C
+#   - Heartbeat: waits for backend before starting detection loop
 
 import os
 import sys
 import time
+import signal
 import socket
 import argparse
 import configparser
@@ -27,6 +30,22 @@ try:
 except ImportError:
     print("[FATAL] 'requests' not installed. Run: pip install requests")
     sys.exit(1)
+
+# ─────────────────────────────────────────────────────────
+# Graceful Shutdown
+# ─────────────────────────────────────────────────────────
+
+_shutdown = False
+
+
+def _handle_signal(signum, frame):
+    global _shutdown
+    _shutdown = True
+    print("\n[INFO] Shutdown signal received. Finishing current cycle...")
+
+
+signal.signal(signal.SIGINT, _handle_signal)
+signal.signal(signal.SIGTERM, _handle_signal)
 
 # ─────────────────────────────────────────────────────────
 # Configuration
@@ -205,6 +224,55 @@ def collect_features(window_seconds):
 
 
 # ─────────────────────────────────────────────────────────
+# Heartbeat — wait for backend before starting detection
+# ─────────────────────────────────────────────────────────
+
+def wait_for_server(session, url, interval=5):
+    """
+    Block until the backend responds or shutdown is requested.
+    Tries every `interval` seconds. Shows a heartbeat in the console.
+    """
+    attempt = 0
+    while not _shutdown:
+        attempt += 1
+        try:
+            r = session.get(
+                url.rsplit("/", 1)[0] + "/health",
+                timeout=5,
+            )
+            if r.status_code == 200:
+                print(f"[HEARTBEAT] Server is UP (attempt {attempt})")
+                return True
+        except requests.exceptions.ConnectionError:
+            pass
+        except Exception:
+            pass
+
+        # Also accept a successful POST (in case /health doesn't exist yet)
+        try:
+            r = session.options(url, timeout=3)
+            if r.status_code < 500:
+                print(f"[HEARTBEAT] Server reachable (attempt {attempt})")
+                return True
+        except Exception:
+            pass
+
+        ts = datetime.now().strftime("%H:%M:%S")
+        backoff = min(interval + (attempt * 2), 60)
+        print(f"[{ts}] [HEARTBEAT] Waiting for server... (attempt {attempt}, retry in {backoff}s)")
+        _interruptible_sleep(backoff)
+
+    return False
+
+
+def _interruptible_sleep(seconds):
+    """Sleep that can be interrupted by Ctrl+C (checks _shutdown every 0.5s)."""
+    end = time.time() + seconds
+    while time.time() < end and not _shutdown:
+        time.sleep(min(0.5, end - time.time()))
+
+
+# ─────────────────────────────────────────────────────────
 # Main Agent Loop
 # ─────────────────────────────────────────────────────────
 
@@ -235,19 +303,30 @@ def run_agent():
     print(f"  Host:    {host_name} ({ip})")
     print(f"  Server:  {url}")
     print(f"  Window:  {window}s  |  Interval: {interval}s")
+    print(f"  Press Ctrl+C to stop gracefully")
     print("=" * 50)
 
     if agent_key == "changeme":
         print("[WARN] Using default agent key. Set a real key in config.ini")
 
+    # ── Heartbeat: wait for backend before entering detection loop ──
+    print("[HEARTBEAT] Checking if backend is reachable...")
+    if not wait_for_server(session, url):
+        print("[INFO] Shutdown requested before server came up. Exiting.")
+        return
+
+    print("[INFO] Backend is online. Starting detection loop.\n")
     consecutive_errors = 0
 
-    while True:
+    while not _shutdown:
         try:
             # Re-detect IP every cycle (handles DHCP changes)
             ip = get_local_ip(server_host)
 
             features, extras = collect_features(window)
+
+            if _shutdown:
+                break
 
             payload = {
                 "host_name": host_name,
@@ -279,11 +358,22 @@ def run_agent():
                 consecutive_errors += 1
 
         except requests.exceptions.ConnectionError:
-            print(f"[WARN] Cannot reach server at {url}. Retrying...")
+            ts = datetime.now().strftime("%H:%M:%S")
+            print(f"[{ts}] [WARN] Lost connection to server. Retrying...")
             consecutive_errors += 1
+            # Re-enter heartbeat mode if too many consecutive errors
+            if consecutive_errors >= 5:
+                print("[HEARTBEAT] Too many failures. Waiting for server to come back...")
+                if not wait_for_server(session, url):
+                    break
+                consecutive_errors = 0
+                continue
         except Exception as e:
             print(f"[ERROR] {e}")
             consecutive_errors += 1
+
+        if _shutdown:
+            break
 
         # Exponential backoff on repeated errors (max 60s extra)
         wait = interval
@@ -291,7 +381,13 @@ def run_agent():
             wait = min(interval + (consecutive_errors * 5), interval + 60)
             print(f"[WARN] {consecutive_errors} errors. Next retry in {wait}s")
 
-        time.sleep(wait)
+        _interruptible_sleep(wait)
+
+    # ── Clean shutdown ──
+    session.close()
+    print("\n" + "=" * 50)
+    print("  Agent stopped cleanly.")
+    print("=" * 50)
 
 
 if __name__ == "__main__":
