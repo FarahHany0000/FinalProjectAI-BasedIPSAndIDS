@@ -1,7 +1,7 @@
 import os
 import threading
 import datetime
-from flask import Flask
+from flask import Flask, jsonify
 from extensions import db, cors
 from utils.model_loader import ModelLoader
 
@@ -75,6 +75,29 @@ def create_app():
     app.register_blueprint(health_bp)
     app.register_blueprint(agent_bp)
     app.register_blueprint(dashboard_bp)
+
+    # ── Root page — quick status overview ──
+    @app.route("/")
+    def index():
+        from models.host import Host
+        from models.registered_agent import RegisteredAgent
+        from models.alert import Alert
+        return jsonify({
+            "service": "AI-Based IDS Backend",
+            "model_loaded": ModelLoader.is_loaded(),
+            "total_hosts": Host.query.count(),
+            "online_hosts": Host.query.filter_by(status="Online").count(),
+            "registered_agents": RegisteredAgent.query.count(),
+            "total_alerts": Alert.query.count(),
+            "endpoints": {
+                "health": "/api/agent/health",
+                "register": "/api/agent/register  [POST]",
+                "host_report": "/api/agent/host-report  [POST]",
+                "stats": "/api/dashboard/stats",
+                "alerts": "/api/dashboard/alerts",
+                "agents": "/api/agents",
+            },
+        })
 
     # ── Create tables + load AI model on startup ──
     with app.app_context():
