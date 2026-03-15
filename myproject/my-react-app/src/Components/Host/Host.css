@@ -29,4 +29,36 @@ button:hover, .view-btn:hover { background-color: #3740b0; color: #fde68a; }
     color: #4dbf73;
 }
 .status-badge.online { color: #2ecc71; }
+/* أضف هذه السطور لملف الـ CSS الخاص بك */
+
+.attack-row {
+    background-color: rgba(255, 0, 0, 0.1) !important;
+    border-left: 5px solid red;
+}
+
+.prevention-active {
+    color: #ff4d4d;
+    font-weight: bold;
+    text-transform: uppercase;
+}
+
+.blink {
+    animation: blinker 1.5s linear infinite;
+}
+
+@keyframes blinker {
+    50% { opacity: 0; }
+}
+
+.sev-tag.high {
+    background-color: red;
+    color: white;
+    padding: 4px 8px;
+    border-radius: 4px;
+}
+
+.highlight {
+    color: #007bff;
+    text-decoration: underline;
+}
 .status-badge.offline { color: #e74c3c; }
