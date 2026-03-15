@@ -221,7 +221,6 @@ def run_agent():
     url = f"http://{server_host}:{server_port}{endpoint}"
 
     host_name = socket.gethostname()
-    ip = get_local_ip(server_host)
 
     # Reuse TCP connection — one persistent session, no noise
     session = requests.Session()
@@ -230,6 +229,7 @@ def run_agent():
         "Content-Type": "application/json",
     })
 
+    ip = get_local_ip(server_host)
     print("=" * 50)
     print(f"  Host IDS Agent")
     print(f"  Host:    {host_name} ({ip})")
@@ -244,6 +244,9 @@ def run_agent():
 
     while True:
         try:
+            # Re-detect IP every cycle (handles DHCP changes)
+            ip = get_local_ip(server_host)
+
             features, extras = collect_features(window)
 
             payload = {
