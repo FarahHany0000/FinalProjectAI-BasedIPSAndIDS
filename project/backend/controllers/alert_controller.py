@@ -22,19 +22,28 @@ class AlertController:
     @staticmethod
     def get_dashboard_stats():
         """Aggregate stats for the frontend dashboard."""
+        from models.registered_agent import RegisteredAgent
+
         total_hosts = Host.query.count()
         online_hosts = Host.query.filter_by(status="Online").count()
+        offline_hosts = Host.query.filter_by(status="Offline").count()
         total_alerts = Alert.query.count()
         recent_alerts = Alert.query.filter(
             Alert.time >= datetime.datetime.now() - datetime.timedelta(hours=1)
         ).count()
+
+        registered_agents = RegisteredAgent.query.count()
+        online_agents = RegisteredAgent.query.filter_by(status="Online").count()
 
         from utils.model_loader import ModelLoader
 
         return {
             "total_hosts": total_hosts,
             "online_hosts": online_hosts,
+            "offline_hosts": offline_hosts,
             "total_alerts": total_alerts,
             "recent_alerts_1h": recent_alerts,
+            "registered_agents": registered_agents,
+            "online_agents": online_agents,
             "model_loaded": ModelLoader.is_loaded(),
         }

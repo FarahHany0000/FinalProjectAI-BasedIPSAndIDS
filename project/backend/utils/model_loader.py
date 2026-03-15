@@ -1,8 +1,10 @@
 import os
 import sys
 
-AI_MODELS_DIR = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "ai_models")
-sys.path.insert(0, AI_MODELS_DIR)
+BASE_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+AI_MODELS_DIR = os.path.join(BASE_DIR, "ai_models")
+HOST_CNN_DIR = os.path.join(AI_MODELS_DIR, "host_cnn")
+NETWORK_XGB_DIR = os.path.join(AI_MODELS_DIR, "network_xgb")
 
 
 class ModelLoader:
@@ -11,7 +13,7 @@ class ModelLoader:
     Singleton-like: call load() once at startup, then use get_pipeline().
     """
 
-    _pipeline = None
+    _host_pipeline = None
 
     @classmethod
     def load(cls):
@@ -21,8 +23,8 @@ class ModelLoader:
             import tensorflow as tf
             import __main__
 
-            pkl_path = os.path.join(AI_MODELS_DIR, "cnn_complete_pipeline.pkl")
-            h5_path = os.path.join(AI_MODELS_DIR, "cnn_weights.h5")
+            pkl_path = os.path.join(HOST_CNN_DIR, "cnn_complete_pipeline.pkl")
+            h5_path = os.path.join(HOST_CNN_DIR, "cnn_weights.h5")
 
             if not os.path.exists(pkl_path):
                 print(f"[WARN] Model file not found: {pkl_path}")
@@ -32,7 +34,7 @@ class ModelLoader:
                 return
 
             # The pkl was saved from __main__; inject the class for unpickling
-            from use_models import CNNPipeline as _CNNPipeline
+            from utils.pipelines import CNNPipeline as _CNNPipeline
             __main__.CNNPipeline = _CNNPipeline
 
             pipeline = joblib.load(pkl_path)
@@ -41,22 +43,22 @@ class ModelLoader:
             cnn_model = tf.keras.models.load_model(h5_path, compile=False)
             pipeline.model = cnn_model
 
-            cls._pipeline = pipeline
+            cls._host_pipeline = pipeline
 
             has_scaler = hasattr(pipeline, "scaler") and pipeline.scaler is not None
-            print(f"[OK] CNN model loaded (pipeline: {type(pipeline).__name__}, scaler: {has_scaler})")
+            print(f"[OK] Host CNN model loaded (scaler: {has_scaler})")
 
         except Exception as e:
             print(f"[ERROR] Failed to load AI model: {e}")
             import traceback
             traceback.print_exc()
-            cls._pipeline = None
+            cls._host_pipeline = None
 
     @classmethod
     def get_pipeline(cls):
-        """Return the loaded model pipeline (or None if not loaded)."""
-        return cls._pipeline
+        """Return the loaded host model pipeline (or None)."""
+        return cls._host_pipeline
 
     @classmethod
     def is_loaded(cls):
-        return cls._pipeline is not None
+        return cls._host_pipeline is not None

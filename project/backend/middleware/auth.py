@@ -14,6 +14,37 @@ def require_agent_key(f):
     return decorated
 
 
+def require_registered_agent(f):
+    """
+    Validate that the agent is registered and approved.
+    Checks X-Agent-Key AND X-Agent-ID headers.
+    The agent must have called /api/agent/register first.
+    """
+    @wraps(f)
+    def decorated(*args, **kwargs):
+        from models.registered_agent import RegisteredAgent
+
+        agent_key = request.headers.get("X-Agent-Key", "")
+        agent_id = request.headers.get("X-Agent-ID", "")
+
+        expected_key = current_app.config.get("AGENT_KEY", "changeme")
+        if agent_key != expected_key:
+            return jsonify({"error": "Unauthorized: bad agent key"}), 401
+
+        if not agent_id:
+            return jsonify({"error": "Unauthorized: missing agent_id. Register first."}), 401
+
+        agent = RegisteredAgent.query.filter_by(agent_id=agent_id).first()
+        if not agent:
+            return jsonify({"error": "Unauthorized: unknown agent. Register first."}), 403
+
+        if not agent.is_approved:
+            return jsonify({"error": "Forbidden: agent not approved by admin"}), 403
+
+        return f(*args, **kwargs)
+    return decorated
+
+
 def validate_json(*required_fields):
     """Validate that request has JSON body with required fields."""
     def decorator(f):

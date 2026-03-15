@@ -11,7 +11,7 @@ class HostController:
     """Business logic for host agent reports and predictions."""
 
     @staticmethod
-    def process_report(host_name, ip, features):
+    def process_report(agent_id, host_name, ip, features):
         """
         Receive 15 features from the agent, run the CNN model, update DB.
         Returns dict with threat/severity/action.
@@ -53,13 +53,14 @@ class HostController:
         # ── Update Database ──
         now = datetime.datetime.now()
 
-        host = Host.query.filter_by(host_name=host_name).first()
+        host = Host.query.filter_by(agent_id=agent_id).first()
         if not host:
-            host = Host(host_name=host_name, ip=ip, last_seen=now, status="Online", action=action)
+            host = Host(agent_id=agent_id, host_name=host_name, ip=ip, last_seen=now, status="Online", action=action)
             db.session.add(host)
         else:
             host.last_seen = now
             host.ip = ip
+            host.host_name = host_name
             host.action = action
             host.status = "Online"
 
