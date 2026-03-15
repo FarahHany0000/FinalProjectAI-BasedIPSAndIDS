@@ -421,7 +421,7 @@ def main():
 
     # Check backend
     try:
-        r = requests.get(f"{BASE_URL}/api/agent/health", timeout=5)
+        r = requests.get(f"{BASE_URL}/api/agent/health", timeout=30)
         if r.status_code == 200:
             data = r.json()
             print(f"  Status  : ONLINE (model_loaded={data.get('model_loaded')})")
