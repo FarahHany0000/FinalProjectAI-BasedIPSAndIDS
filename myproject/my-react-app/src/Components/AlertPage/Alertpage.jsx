@@ -6,10 +6,13 @@ import "./Alerts.css";
 export default function AlertsPage() {
   const navigate = useNavigate();
   const [alerts, setAlerts] = useState([]);
+
   const [stats, setStats] = useState({
     total: 0,
     critical: 0,
     high: 0,
+    medium: 0,
+    low: 0
   });
 
   // IPS Decision Engine
@@ -53,11 +56,17 @@ export default function AlertsPage() {
 
   // Fake alerts generator
   const generateRandomAlerts = () => {
-    const types = ["DDoS Attack", "Port Scan", "Malware Detection", "SQL Injection", "Brute Force"];
+    const types = [
+      "DDoS Attack",
+      "Port Scan",
+      "Malware Detection",
+      "SQL Injection",
+      "Brute Force"
+    ];
+
     return Array.from({ length: 5 }).map(() => {
       const type = types[Math.floor(Math.random() * types.length)];
       const severity = getSeverity(type);
-      // Random connection status
       const connection = Math.random() > 0.5 ? "Online" : "Offline";
 
       return {
@@ -66,7 +75,7 @@ export default function AlertsPage() {
         type,
         severity,
         action: generateAction(type, severity),
-        connection,
+        connection
       };
     });
   };
@@ -76,15 +85,18 @@ export default function AlertsPage() {
     const updateAlerts = () => {
       const newAlerts = generateRandomAlerts();
       setAlerts(newAlerts);
+
       setStats({
         total: newAlerts.length,
         critical: newAlerts.filter(a => a.severity === "Critical").length,
         high: newAlerts.filter(a => a.severity === "High").length,
+        medium: newAlerts.filter(a => a.severity === "Medium").length,
+        low: newAlerts.filter(a => a.severity === "Low").length
       });
     };
 
-    updateAlerts(); 
-    const interval = setInterval(updateAlerts, 3000); 
+    updateAlerts();
+    const interval = setInterval(updateAlerts, 3000);
 
     return () => clearInterval(interval);
   }, []);
@@ -92,7 +104,9 @@ export default function AlertsPage() {
   return (
     <div className="dashboard">
       <Sidebar />
+
       <div className="main-content">
+
         <div className="icondesign">
           <div className="icons">
             <svg
@@ -106,29 +120,46 @@ export default function AlertsPage() {
               <path d="M8 5.993c1.664 0 3.007 1.343 3.007 3.007S9.664 12.007 8 12.007 4.993 10.664 4.993 9 6.336 5.993 8 5.993z"/>
             </svg>
           </div>
+
           <h1>Alerts</h1>
         </div>
-        
+
 
         {/* Stats */}
         <div className="alerts-stats">
+
           <div className="stat-card">
             Total Alerts
             <h2>{stats.total}</h2>
           </div>
+
           <div className="stat-card critical">
             Critical Threats
             <h2>{stats.critical}</h2>
           </div>
+
           <div className="stat-card high">
             High Severity
             <h2>{stats.high}</h2>
           </div>
+
+          <div className="stat-card medium">
+            Medium Severity
+            <h2>{stats.medium}</h2>
+          </div>
+
+          <div className="stat-card low">
+            Low Severity
+            <h2>{stats.low}</h2>
+          </div>
+
         </div>
+
 
         {/* Alerts Table */}
         <div className="alerts-table">
           <h3>Live Traffic</h3>
+
           <table>
             <thead>
               <tr>
@@ -141,27 +172,34 @@ export default function AlertsPage() {
                 <th>Details</th>
               </tr>
             </thead>
+
             <tbody>
               {alerts.map((alert) => (
                 <tr key={alert.id}>
                   <td>{alert.id}</td>
                   <td>{alert.time}</td>
                   <td>{alert.type}</td>
+
                   <td>
                     <span className={`badge ${getSeverityColor(alert.severity)}`}>
                       {alert.severity}
                     </span>
                   </td>
+
                   <td>
                     <span style={{ color: "red", fontWeight: "bold" }}>
                       {alert.action}
                     </span>
                   </td>
+
                   <td>
-                    <span style={{ color: alert.connection === "Online" ? "green" : "red" } }>
+                    <span style={{
+                      color: alert.connection === "Online" ? "green" : "red"
+                    }}>
                       {alert.connection}
                     </span>
                   </td>
+
                   <td>
                     <button
                       className="details-btn"
@@ -170,17 +208,24 @@ export default function AlertsPage() {
                       View
                     </button>
                   </td>
+
                 </tr>
               ))}
             </tbody>
+
           </table>
         </div>
 
+
         <div style={{ marginTop: "20px", textAlign: "right" }}>
-          <button className="logs-btn" onClick={() => navigate("/alert/logs")}>
+          <button
+            className="logs-btn"
+            onClick={() => navigate("/alert/logs")}
+          >
             View Logs
           </button>
         </div>
+
       </div>
     </div>
   );
