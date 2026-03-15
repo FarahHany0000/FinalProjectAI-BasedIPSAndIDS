@@ -14,12 +14,15 @@
 #   - Minimal footprint: psutil + requests only
 #   - Graceful shutdown on Ctrl+C
 #   - Heartbeat: waits for backend before starting detection loop
+#   - Unique agent_id: registers with backend to prove identity
 
 import os
 import sys
 import time
+import uuid
 import signal
 import socket
+import platform
 import argparse
 import configparser
 import psutil
@@ -94,6 +97,32 @@ def load_config():
         config["window"] = str(args.window)
 
     return config
+
+
+# ─────────────────────────────────────────────────────────
+# Agent Identity — unique ID per device
+# ─────────────────────────────────────────────────────────
+
+AGENT_ID_FILE = os.path.join(os.path.dirname(os.path.abspath(__file__)), ".agent_id")
+
+
+def get_or_create_agent_id():
+    """
+    Load agent_id from .agent_id file, or generate a new UUID on first run.
+    This ID is unique per device and persists across restarts.
+    """
+    if os.path.exists(AGENT_ID_FILE):
+        with open(AGENT_ID_FILE, "r") as f:
+            agent_id = f.read().strip()
+            if agent_id:
+                return agent_id
+
+    # First run — generate new UUID
+    agent_id = str(uuid.uuid4())
+    with open(AGENT_ID_FILE, "w") as f:
+        f.write(agent_id)
+    print(f"[IDENTITY] New agent_id generated: {agent_id[:8]}...")
+    return agent_id
 
 
 # ─────────────────────────────────────────────────────────
@@ -265,6 +294,41 @@ def wait_for_server(session, url, interval=5):
     return False
 
 
+def register_with_backend(session, base_url, agent_id, host_name, ip):
+    """
+    Register this agent with the backend. Must be called after server is reachable.
+    Returns True if registered/already_registered, False if rejected.
+    """
+    url = base_url + "/register"
+    payload = {
+        "agent_id": agent_id,
+        "host_name": host_name,
+        "ip": ip,
+        "os_info": f"{platform.system()} {platform.release()} ({platform.machine()})",
+    }
+
+    try:
+        r = session.post(url, json=payload, timeout=10)
+        if r.status_code in (200, 201):
+            data = r.json()
+            status = data.get("status", "unknown")
+            approved = data.get("is_approved", False)
+            print(f"[REGISTER] {status} (approved: {approved})")
+            if not approved:
+                print("[REGISTER] Agent is NOT approved. Contact admin.")
+                return False
+            return True
+        elif r.status_code == 401:
+            print("[REGISTER] Bad agent key. Check config.ini")
+            return False
+        else:
+            print(f"[REGISTER] Unexpected response: {r.status_code}")
+            return False
+    except Exception as e:
+        print(f"[REGISTER] Failed: {e}")
+        return False
+
+
 def _interruptible_sleep(seconds):
     """Sleep that can be interrupted by Ctrl+C (checks _shutdown every 0.5s)."""
     end = time.time() + seconds
@@ -286,41 +350,50 @@ def run_agent():
     window = int(config["window"])
     endpoint = config["endpoint"]
 
-    url = f"http://{server_host}:{server_port}{endpoint}"
+    base_url = f"http://{server_host}:{server_port}/api/agent"
+    report_url = f"http://{server_host}:{server_port}{endpoint}"
 
     host_name = socket.gethostname()
+    agent_id = get_or_create_agent_id()
 
     # Reuse TCP connection — one persistent session, no noise
     session = requests.Session()
     session.headers.update({
         "X-Agent-Key": agent_key,
+        "X-Agent-ID": agent_id,
         "Content-Type": "application/json",
     })
 
     ip = get_local_ip(server_host)
     print("=" * 50)
     print(f"  Host IDS Agent")
-    print(f"  Host:    {host_name} ({ip})")
-    print(f"  Server:  {url}")
-    print(f"  Window:  {window}s  |  Interval: {interval}s")
+    print(f"  Host:     {host_name} ({ip})")
+    print(f"  Agent ID: {agent_id[:8]}...")
+    print(f"  Server:   {report_url}")
+    print(f"  Window:   {window}s  |  Interval: {interval}s")
     print(f"  Press Ctrl+C to stop gracefully")
     print("=" * 50)
 
     if agent_key == "changeme":
         print("[WARN] Using default agent key. Set a real key in config.ini")
 
-    # ── Heartbeat: wait for backend before entering detection loop ──
+    # ── Heartbeat: wait for backend ──
     print("[HEARTBEAT] Checking if backend is reachable...")
-    if not wait_for_server(session, url):
+    if not wait_for_server(session, report_url):
         print("[INFO] Shutdown requested before server came up. Exiting.")
         return
 
-    print("[INFO] Backend is online. Starting detection loop.\n")
+    # ── Register with backend ──
+    print("[REGISTER] Introducing this agent to the backend...")
+    if not register_with_backend(session, base_url, agent_id, host_name, ip):
+        print("[FATAL] Registration failed. Cannot proceed.")
+        return
+
+    print("[INFO] Backend is online. Agent is registered. Starting detection loop.\n")
     consecutive_errors = 0
 
     while not _shutdown:
         try:
-            # Re-detect IP every cycle (handles DHCP changes)
             ip = get_local_ip(server_host)
 
             features, extras = collect_features(window)
@@ -329,12 +402,13 @@ def run_agent():
                 break
 
             payload = {
+                "agent_id": agent_id,
                 "host_name": host_name,
                 "ip": ip,
                 "features": features,
             }
 
-            response = session.post(url, json=payload, timeout=10)
+            response = session.post(report_url, json=payload, timeout=10)
 
             if response.status_code == 200:
                 res = response.json()
@@ -361,10 +435,9 @@ def run_agent():
             ts = datetime.now().strftime("%H:%M:%S")
             print(f"[{ts}] [WARN] Lost connection to server. Retrying...")
             consecutive_errors += 1
-            # Re-enter heartbeat mode if too many consecutive errors
             if consecutive_errors >= 5:
                 print("[HEARTBEAT] Too many failures. Waiting for server to come back...")
-                if not wait_for_server(session, url):
+                if not wait_for_server(session, report_url):
                     break
                 consecutive_errors = 0
                 continue

@@ -1,6 +1,7 @@
 from flask import Blueprint, jsonify
 from controllers.host_controller import HostController
 from controllers.alert_controller import AlertController
+from models.registered_agent import RegisteredAgent
 
 dashboard_bp = Blueprint("dashboard", __name__)
 
@@ -9,6 +10,13 @@ dashboard_bp = Blueprint("dashboard", __name__)
 def get_hosts():
     """Return all registered hosts (for frontend)."""
     return jsonify(HostController.get_all_hosts())
+
+
+@dashboard_bp.route("/api/agents", methods=["GET"])
+def get_agents():
+    """Return all registered agents (for frontend)."""
+    agents = RegisteredAgent.query.all()
+    return jsonify([a.to_dict() for a in agents])
 
 
 @dashboard_bp.route("/api/alerts/<hostname>", methods=["GET"])
