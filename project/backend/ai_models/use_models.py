@@ -66,31 +66,6 @@ class CNNPipeline:
             'model': self.name
         }
 
-print(" Loading models...")
-
-try:
-    rf_model = joblib.load('rf_complete_pipeline.pkl')
-    print("Random Forest loaded")
-except Exception as e:
-    print(f" Random Forest error: {e}")
-    rf_model = None
-
-try:
-    xgb_model = joblib.load('xgb_complete_pipeline.pkl')
-    print("XGBoost loaded")
-except Exception as e:
-    print(f"XGBoost error: {e}")
-    xgb_model = None
-
-try:
-    cnn_pipeline = joblib.load('cnn_complete_pipeline.pkl')
-    cnn_weights = load_model('cnn_weights.h5')
-    cnn_pipeline.model = cnn_weights  # ربط الـ weights
-    print(" CNN loaded")
-except Exception as e:
-    print(f" CNN error: {e}")
-    cnn_pipeline = None
-
 feature_names = [
     'total_logons', 'avg_logon_hour', 'std_logon_hour', 
     'weekend_logons', 'after_hours_logons', 'unique_pcs_logon',
@@ -99,6 +74,40 @@ feature_names = [
     'total_file_activities', 'unique_files', 'unique_pcs_file',
     'avg_file_hour', 'after_hours_files'
 ]
+
+
+def load_all_models(model_dir=None):
+    """Load all models from the given directory. Returns (rf, xgb, cnn) pipelines."""
+    import os
+    if model_dir is None:
+        model_dir = os.path.dirname(os.path.abspath(__file__))
+
+    rf_model = None
+    xgb_model = None
+    cnn_pipeline_obj = None
+
+    try:
+        rf_model = joblib.load(os.path.join(model_dir, 'rf_complete_pipeline.pkl'))
+        print("Random Forest loaded")
+    except Exception as e:
+        print(f"Random Forest: {e}")
+
+    try:
+        xgb_model = joblib.load(os.path.join(model_dir, 'xgb_complete_pipeline.pkl'))
+        print("XGBoost loaded")
+    except Exception as e:
+        print(f"XGBoost: {e}")
+
+    try:
+        cnn_pipeline_obj = joblib.load(os.path.join(model_dir, 'cnn_complete_pipeline.pkl'))
+        cnn_weights = load_model(os.path.join(model_dir, 'cnn_weights.h5'), compile=False)
+        cnn_pipeline_obj.model = cnn_weights
+        print("CNN loaded")
+    except Exception as e:
+        print(f"CNN: {e}")
+
+    return rf_model, xgb_model, cnn_pipeline_obj
+
 
 def print_usage():
     print("\nUsage:")
@@ -112,6 +121,9 @@ def print_usage():
         print(f"  {i:2d}. {name}")
 
 if __name__ == "__main__":
+    print("Loading models...")
+    rf_model, xgb_model, cnn_pipeline = load_all_models()
+
     if len(sys.argv) < 3:
         print_usage()
         sys.exit(1)
