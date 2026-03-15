@@ -22,6 +22,7 @@ class HostController:
             )
 
         threat, severity, action = "Normal", "Low", "No Action"
+        probability = 0.0
 
         # ── AI Prediction ──
         pipeline = ModelLoader.get_pipeline()
@@ -74,7 +75,7 @@ class HostController:
 
         db.session.commit()
 
-        return {"threats": threat, "severity": severity, "action": action}
+        return {"threats": threat, "severity": severity, "action": action, "prediction": threat, "probability": probability}
 
     @staticmethod
     def get_all_hosts():
