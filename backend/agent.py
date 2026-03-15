@@ -1,5 +1,6 @@
 import socket
 import time
+from datetime import datetime, UTC
 import requests
 import psutil
 from datetime import datetime
@@ -7,54 +8,92 @@ from datetime import datetime
 API_URL = "http://127.0.0.1:5000/api/agent/host-report"
 AGENT_KEY = "mysecrettoken"
 
-def get_ip():
-    try:
-        s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
-        s.connect(("8.8.8.8", 80))
-        ip = s.getsockname()[0]
-        s.close()
-        return ip
-    except: return "127.0.0.1"
+
+def get_cert_features():
+    now = datetime.now()
+
+    # time features
+    is_weekend = 1.0 if now.weekday() >= 5 else 0.0
+    is_after_hours = 1.0 if (now.hour < 8 or now.hour > 18) else 0.0
+
+    # process features
+    procs = list(psutil.process_iter())
+    proc_count = float(len(procs))
+
+    return [
+        float(len(psutil.users())),                 # total_logons
+        float(now.hour),                            # avg_logon_hour
+        0.0,                                        # std_logon_hour
+        is_weekend,                                 # weekend_logons
+        is_after_hours,                             # after_hours_logons
+        1.0,                                        # unique_pcs_logon
+        float(len(psutil.disk_partitions())),       # total_device_activities
+        1.0,                                        # unique_pcs_device
+        float(now.hour),                            # avg_device_hour
+        is_after_hours,                             # after_hours_device
+        proc_count,                                 # total_file_activities
+        proc_count * 0.5,                           # unique_files
+        1.0,                                        # unique_pcs_file
+        float(now.hour),                            # avg_file_hour
+        is_after_hours                              # after_hours_files
+    ]
+
+
+def get_system_status():
+    """System metrics"""
+    return {
+        "cpu": psutil.cpu_percent(),
+        "memory": psutil.virtual_memory().percent,
+        "connections": len(psutil.net_connections())
+    }
+
 
 def run_agent():
     host_name = socket.gethostname()
-    ip = get_ip()
-    print(f" Agent is running on {host_name} ({ip})...")
+    ip = socket.gethostbyname(host_name)
+
+    print(f"🛡️ Agent started on {host_name} ({ip})")
 
     while True:
 
-        features = [
-            float(len(psutil.users())),
-            float(datetime.now().hour),
-            float(psutil.cpu_percent()),
-            float(psutil.virtual_memory().percent),
-            float(len(psutil.pids())),
-            0.0, 1.0, 0.0, 0.0, 1.0, 
-            0.0, 0.0, 1.0, 0.0, 0.0  
-        ]
+        features = get_cert_features()
+        system = get_system_status()
 
         payload = {
             "host_name": host_name,
             "ip": ip,
-            "features": features
+            "features": features,
+            "system": system,
+            "timestamp": datetime.now(UTC).isoformat(),
+            "status": "online"
         }
 
         try:
-            response = requests.post(
-                API_URL, 
-                json=payload, 
-                headers={"X-Agent-Key": AGENT_KEY}, 
+            res = requests.post(
+                API_URL,
+                json=payload,
+                headers={"X-Agent-Key": AGENT_KEY},
                 timeout=5
             )
-            if response.status_code == 200:
-                res_data = response.json()
-                print(f"[{datetime.now().strftime('%H:%M:%S')}] Threat Level: {res_data['threats']} | Action: {res_data['action']}")
+
+            if res.status_code == 200:
+                data = res.json()
+
+                print(
+                    f"[{datetime.now().strftime('%H:%M:%S')}] "
+                    f"Status: Online | "
+                    f"Threat: {data.get('threat','Normal')} | "
+                    f"Action: {data.get('action','No Action')}"
+                )
+
             else:
-                print(f"Server Error: {response.status_code}")
+                print(f"Server Error: {res.status_code}")
+
         except Exception as e:
-            print(f"Connection Error: {e}")
+            print(f"Connection Error → Agent cannot reach server: {e}")
 
         time.sleep(10)
+
 
 if __name__ == "__main__":
     run_agent()

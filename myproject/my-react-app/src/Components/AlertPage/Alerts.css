@@ -88,3 +88,10 @@ td .badge {
   padding: 8px;
   border-radius: 8px;
 }
+.stat-card.medium{
+  border-left:5px solid orange;
+}
+
+.stat-card.low{
+  border-left:5px solid green;
+}

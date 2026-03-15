@@ -1,4 +1,4 @@
-import React, { createContext, useState, useEffect } from "react";
+import React, { createContext, useState } from "react";
 
 export const SystemContext = createContext();
 
@@ -13,58 +13,10 @@ export const SystemProvider = ({ children }) => {
   const [events, setEvents] = useState([]);
   const [toastMessage, setToastMessage] = useState("");
 
-  const generateAction = (severity) => {
-    switch (severity) {
-      case "Critical": return "Host Isolated";
-      case "High": return "IP Blacklisted";
-      case "Medium": return "Traffic Dropped";
-      case "Low": return "Firewall Rule Added";
-      default: return "Connection Reset";
-    }
-  };
-
-  const scanNetwork = () => {
-    const updatedHosts = hosts.map(h => ({
-      ...h,
-      status: Math.random() > 0.25 ? "Online" : "Offline",
-      cpu: Math.floor(Math.random() * 100),
-      memory: Math.floor(Math.random() * 100),
-      disk: Math.floor(Math.random() * 100),
-      network: Math.floor(Math.random() * 100),
-      threats: Math.random() > 0.7 ? Math.floor(Math.random() * 5) : 0
-    }));
-    setHosts(updatedHosts);
-
-    const attackTypes = ["Malware Communication", "DDoS Traffic Detected", "Phishing Domain Access", "Brute Force Login Attempt", "SQL Injection Attempt", "Botnet Command Activity", "Port Scanning Activity"];
-    const severities = ["Low", "Medium", "High", "Critical"];
-    const randomHost = updatedHosts[Math.floor(Math.random() * updatedHosts.length)];
-
-    const newEvent = {
-      id: `ALT-${Math.floor(Math.random() * 1000)}`,
-      date: new Date().toLocaleString(),
-      type: attackTypes[Math.floor(Math.random() * attackTypes.length)],
-      host: randomHost.ip,
-      severity: severities[Math.floor(Math.random() * severities.length)],
-      action: generateAction(severities[Math.floor(Math.random() * severities.length)]),
-    };
-
-    setEvents(prev => [newEvent, ...prev]);
-
-    
-    setToastMessage("Network Scan Completed Successfully!");
-    setTimeout(() => setToastMessage(""),1000000);
-  };
-
-  useEffect(() => {
-    const interval = setInterval(scanNetwork, 10000000);
-    return () => clearInterval(interval);
-  }, [hosts]);
-
   return (
-    <SystemContext.Provider value={{ hosts, setHosts, events, setEvents, scanNetwork, toastMessage }}>
+    <SystemContext.Provider value={{ hosts, setHosts, events, setEvents, toastMessage, setToastMessage }}>
       {children}
 
-   
       {toastMessage && (
         <div style={{
           position: "fixed",
@@ -73,7 +25,7 @@ export const SystemProvider = ({ children }) => {
           width: "100%",
           padding: "15px 0",
           textAlign: "center",
-          backgroundColor: "#ef4444", 
+          backgroundColor: "#ef4444",
           color: "#fff",
           fontWeight: "bold",
           zIndex: 9999,
