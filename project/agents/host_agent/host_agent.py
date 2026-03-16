@@ -442,7 +442,7 @@ def run_agent():
 
             if response.status_code == 200:
                 res = response.json()
-                threat = res.get("threats", "Unknown")
+                threat = res.get("prediction", "Unknown")
                 action = res.get("action", "N/A")
                 ts = datetime.now().strftime("%H:%M:%S")
 

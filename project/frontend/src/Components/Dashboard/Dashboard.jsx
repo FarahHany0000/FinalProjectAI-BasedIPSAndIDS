@@ -2,6 +2,7 @@ import React, { useState, useEffect } from "react";
 import Sidebar from "../Sidebar/Sidebar";
 import { useNavigate } from "react-router-dom";
 import API_BASE from "../../config";
+import socket from "../../socket";
 
 export default function Dashboard() {
   const navigate = useNavigate();
@@ -26,19 +27,32 @@ export default function Dashboard() {
 
   useEffect(() => {
     fetchData();
-    const interval = setInterval(fetchData, 3000);
-    return () => clearInterval(interval);
-  }, []);
+    const interval = setInterval(fetchData, 5000);
 
-  const generateAction = (severity) => {
-    switch (severity) {
-      case "Critical": return "Host Isolated";
-      case "High": return "Host Flagged";
-      case "Medium": return "Traffic Monitored";
-      case "Low": return "Logged";
-      default: return "No Action";
-    }
-  };
+    socket.on("host_update", (host) => {
+      setHosts(prev => {
+        const idx = prev.findIndex(h => h.agent_id === host.agent_id);
+        if (idx >= 0) {
+          const updated = [...prev];
+          updated[idx] = host;
+          return updated;
+        }
+        return [...prev, host];
+      });
+    });
+
+    socket.on("new_alert", (alert) => {
+      setAlerts(prev => [alert, ...prev].slice(0, 100));
+      // Refresh stats on new alert
+      fetch(`${API_BASE}/api/dashboard/stats`).then(r => r.json()).then(setStats).catch(() => {});
+    });
+
+    return () => {
+      clearInterval(interval);
+      socket.off("host_update");
+      socket.off("new_alert");
+    };
+  }, []);
 
   return (
     <div className="dashboard-container">
@@ -130,7 +144,7 @@ export default function Dashboard() {
           </table>
         </div>
 
-        {/* Recent Alerts Table */}
+        {/* Recent Alerts Table — no severity column */}
         <div className="panel">
           <h3>Recent Alerts</h3>
           <table>
@@ -138,7 +152,6 @@ export default function Dashboard() {
               <tr>
                 <th>Host Name</th>
                 <th>Threat</th>
-                <th>Severity</th>
                 <th>Action Taken</th>
                 <th>Time</th>
               </tr>
@@ -147,17 +160,12 @@ export default function Dashboard() {
               {alerts.length > 0 ? alerts.slice(0, 10).map((alert, idx) => (
                 <tr key={idx}>
                   <td>{alert.host_name}</td>
-                  <td>{alert.threat}</td>
-                  <td>
-                    <span className={`badge ${alert.severity?.toLowerCase()}`}>
-                      {alert.severity}
-                    </span>
-                  </td>
-                  <td style={{ color: "#ef4444", fontWeight: "bold" }}>{alert.action}</td>
+                  <td style={{ color: "#ef4444", fontWeight: "bold" }}>{alert.threat}</td>
+                  <td style={{ color: "#f97316", fontWeight: "bold" }}>{alert.action}</td>
                   <td>{alert.time ? new Date(alert.time).toLocaleString() : "N/A"}</td>
                 </tr>
               )) : (
-                <tr><td colSpan="5" className="empty-logs">No alerts detected. System is secure.</td></tr>
+                <tr><td colSpan="4" className="empty-logs">No alerts detected. System is secure.</td></tr>
               )}
             </tbody>
           </table>
@@ -169,7 +177,7 @@ export default function Dashboard() {
             {stats?.model_loaded ? "🟢" : "🔴"}
           </span>
           <span>
-            AI Model: <strong>{stats?.model_loaded ? "Loaded & Active" : "Not Loaded"}</strong>
+            AI Model: <strong>{stats?.model_loaded ? "XGBoost — Loaded & Active" : "Not Loaded"}</strong>
           </span>
         </div>
 

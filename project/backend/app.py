@@ -2,7 +2,7 @@ import os
 import threading
 import datetime
 from flask import Flask, jsonify
-from extensions import db, cors
+from extensions import db, cors, socketio
 from utils.model_loader import ModelLoader
 
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
@@ -45,6 +45,8 @@ def _heartbeat_monitor(app):
 
                 if stale_hosts or stale_agents:
                     db.session.commit()
+                    for h in stale_hosts:
+                        socketio.emit("host_update", h.to_dict())
 
         except Exception as e:
             print(f"[HEARTBEAT ERROR] {e}")
@@ -66,6 +68,7 @@ def create_app():
     # ── Extensions ──
     db.init_app(app)
     cors.init_app(app)
+    socketio.init_app(app)
 
     # ── Register Blueprints (routes) ──
     from routes.health import health_bp
@@ -126,4 +129,4 @@ if __name__ == "__main__":
     print(f"  Listening on: 0.0.0.0:5000")
     print("=" * 50)
 
-    app.run(host="0.0.0.0", port=5000, threaded=True)
+    socketio.run(app, host="0.0.0.0", port=5000, allow_unsafe_werkzeug=True)

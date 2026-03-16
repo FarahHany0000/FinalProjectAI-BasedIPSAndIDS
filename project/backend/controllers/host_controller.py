@@ -1,5 +1,5 @@
 import datetime
-from extensions import db
+from extensions import db, socketio
 from models.host import Host
 from models.alert import Alert
 from utils.model_loader import ModelLoader
@@ -12,30 +12,28 @@ class HostController:
     @staticmethod
     def process_report(agent_id, host_name, ip, features):
         """
-        Receive 15 features from the agent, run the CNN model, update DB.
-        Returns dict with threat/severity/action.
+        Receive 15 features from the agent, run XGBoost prediction, update DB.
+        Returns dict with prediction/probability/action.
         """
         if not features or len(features) != EXPECTED_FEATURE_COUNT:
             raise ValueError(
                 f"Expected {EXPECTED_FEATURE_COUNT} features, got {len(features) if features else 0}"
             )
 
-        threat, severity, action = "Normal", "Low", "No Action"
+        threat, action = "Normal", "No Action"
         probability = 0.0
 
-        # ── AI Prediction (majority vote across all models) ──
+        # ── AI Prediction (XGBoost primary) ──
         if ModelLoader.is_loaded():
             try:
                 result = ModelLoader.predict(features)
                 pred_label = result.get("prediction", "Normal")
                 probability = result.get("probability", 0.0)
-                votes = result.get("votes", "0/0")
 
                 if pred_label == "Attack":
                     threat = "Attack"
-                    severity = "High" if probability > 0.8 else "Medium"
                     action = "Host Flagged"
-                    print(f"[ALERT] {host_name}: Attack (prob={probability:.3f}, votes={votes})")
+                    print(f"[ALERT] {host_name}: Attack (prob={probability:.3f})")
 
             except Exception as e:
                 print(f"[PREDICTION ERROR] {e}")
@@ -59,14 +57,19 @@ class HostController:
         if threat != "Normal":
             alert = Alert(
                 host_name=host_name, ip=ip,
-                threat_type=threat, severity=severity,
+                threat_type=threat,
                 action=action, time=now,
             )
             db.session.add(alert)
 
         db.session.commit()
 
-        return {"threats": threat, "severity": severity, "action": action, "prediction": threat, "probability": probability}
+        # Emit real-time WebSocket events
+        socketio.emit("host_update", host.to_dict())
+        if threat != "Normal":
+            socketio.emit("new_alert", alert.to_dict())
+
+        return {"prediction": threat, "probability": probability, "action": action}
 
     @staticmethod
     def get_all_hosts():

@@ -19,6 +19,7 @@ import sys
 import time
 import uuid
 import shutil
+import platform
 import threading
 import requests
 
@@ -34,7 +35,17 @@ args = parser.parse_args()
 
 BASE_URL = f"http://{args.server}"
 AGENT_KEY = args.key
-AGENT_ID = str(uuid.uuid4())
+
+# Read the real agent ID from the host agent's .agent_id file
+_agent_id_file = os.path.join(os.path.dirname(__file__), "agents", "host_agent", ".agent_id")
+if os.path.exists(_agent_id_file):
+    AGENT_ID = open(_agent_id_file).read().strip()
+else:
+    AGENT_ID = str(uuid.uuid4())
+
+import platform
+HOST_NAME = platform.node()
+
 SESSION = requests.Session()
 SESSION.headers.update({
     "Content-Type": "application/json",
@@ -121,12 +132,12 @@ def bar(prob, width=25):
 # Register this simulation agent
 # ---------------------------------------------------------------------------
 def register():
-    print(f"[*] Registering simulation agent ({AGENT_ID[:8]}...)...")
+    print(f"[*] Registering as {HOST_NAME} ({AGENT_ID[:8]}...)...")
     try:
         r = SESSION.post(f"{BASE_URL}/api/agent/register", json={
             "agent_id": AGENT_ID,
-            "host_name": "ATTACK-SIMULATION",
-            "os_info": "Simulation Script",
+            "host_name": HOST_NAME,
+            "os_info": f"{platform.system()} {platform.release()}",
         })
         if r.status_code == 201:
             print(f"[OK] Registered successfully\n")
@@ -148,7 +159,7 @@ def register():
 # ---------------------------------------------------------------------------
 def send_features(features, scenario_name):
     payload = {
-        "host_name": "ATTACK-SIMULATION",
+        "host_name": HOST_NAME,
         "features": features,
     }
     try:
@@ -158,7 +169,6 @@ def send_features(features, scenario_name):
             pred = data.get("prediction", "?")
             prob = data.get("probability", 0)
             action = data.get("action", "?")
-            severity = data.get("severity", "?")
 
             is_attack = pred == "Attack"
             icon = "!!!" if is_attack else "   "
@@ -166,7 +176,7 @@ def send_features(features, scenario_name):
             color_end = "\033[0m"
 
             print(f"  {color_start}{icon} {bar(prob)} {prob*100:5.1f}%  "
-                  f"Prediction: {pred:6s}  |  Severity: {severity}  |  Action: {action}{color_end}")
+                  f"Prediction: {pred:6s}  |  Action: {action}{color_end}")
             return data
         else:
             print(f"  [ERROR] {r.status_code}: {r.text[:100]}")

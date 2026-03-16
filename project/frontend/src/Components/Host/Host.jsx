@@ -2,6 +2,7 @@ import React, { useEffect, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import Sidebar from "../Sidebar/Sidebar";
 import API_BASE from "../../config";
+import socket from "../../socket";
 
 export default function Host() {
   const [hosts, setHosts] = useState([]);
@@ -19,8 +20,24 @@ export default function Host() {
 
   useEffect(() => {
     fetchHosts();
-    const interval = setInterval(fetchHosts, 2000);
-    return () => clearInterval(interval);
+    const interval = setInterval(fetchHosts, 5000);
+
+    socket.on("host_update", (host) => {
+      setHosts(prev => {
+        const idx = prev.findIndex(h => h.agent_id === host.agent_id);
+        if (idx >= 0) {
+          const updated = [...prev];
+          updated[idx] = host;
+          return updated;
+        }
+        return [...prev, host];
+      });
+    });
+
+    return () => {
+      clearInterval(interval);
+      socket.off("host_update");
+    };
   }, []);
 
   const checkOnlineStatus = (lastSeen) => {
