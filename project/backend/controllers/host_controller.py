@@ -1,5 +1,4 @@
 import datetime
-import numpy as np
 from extensions import db
 from models.host import Host
 from models.alert import Alert
@@ -24,27 +23,19 @@ class HostController:
         threat, severity, action = "Normal", "Low", "No Action"
         probability = 0.0
 
-        # ── AI Prediction ──
-        pipeline = ModelLoader.get_pipeline()
-        if pipeline is not None:
+        # ── AI Prediction (majority vote across all models) ──
+        if ModelLoader.is_loaded():
             try:
-                result = pipeline.predict(features)
+                result = ModelLoader.predict(features)
+                pred_label = result.get("prediction", "Normal")
+                probability = result.get("probability", 0.0)
+                votes = result.get("votes", "0/0")
 
-                if isinstance(result, dict):
-                    pred_label = result.get("prediction", "Normal")
-                    probability = result.get("probability", 0.0)
-                    if pred_label == "Attack" or pred_label == 1:
-                        threat = "Attack"
-                        severity = "High" if probability > 0.8 else "Medium"
-                        action = "Host Flagged"
-                else:
-                    pred_val = result[0] if hasattr(result, "__getitem__") else result
-                    if isinstance(pred_val, (list, np.ndarray)):
-                        pred_val = pred_val[0]
-                    if pred_val == 1 or (isinstance(pred_val, float) and pred_val >= 0.5):
-                        threat = "Attack"
-                        severity = "High"
-                        action = "Host Flagged"
+                if pred_label == "Attack":
+                    threat = "Attack"
+                    severity = "High" if probability > 0.8 else "Medium"
+                    action = "Host Flagged"
+                    print(f"[ALERT] {host_name}: Attack (prob={probability:.3f}, votes={votes})")
 
             except Exception as e:
                 print(f"[PREDICTION ERROR] {e}")

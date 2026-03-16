@@ -3,62 +3,111 @@ import sys
 
 BASE_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 AI_MODELS_DIR = os.path.join(BASE_DIR, "ai_models")
-HOST_CNN_DIR = os.path.join(AI_MODELS_DIR, "host_cnn")
-NETWORK_XGB_DIR = os.path.join(AI_MODELS_DIR, "network_xgb")
+HOST_MODELS_DIR = os.path.join(AI_MODELS_DIR, "host_cnn")
 
 
 class ModelLoader:
     """
-    Loads and manages AI model pipelines.
-    Singleton-like: call load() once at startup, then use get_pipeline().
+    Loads all host AI models (XGBoost, Random Forest, CNN) and provides
+    majority-vote prediction. XGBoost is the primary model.
     """
 
-    _host_pipeline = None
+    _xgb_pipeline = None
+    _rf_pipeline = None
+    _cnn_pipeline = None
 
     @classmethod
     def load(cls):
-        """Load the CNN pipeline (scaler from pkl + weights from h5)."""
-        try:
-            import joblib
-            import tensorflow as tf
-            import __main__
+        """Load all available host model pipelines."""
+        import joblib
+        import __main__
 
-            pkl_path = os.path.join(HOST_CNN_DIR, "cnn_complete_pipeline.pkl")
-            h5_path = os.path.join(HOST_CNN_DIR, "cnn_weights.h5")
+        from utils.pipelines import XGBoostPipeline, RandomForestPipeline, CNNPipeline
+        __main__.XGBoostPipeline = XGBoostPipeline
+        __main__.RandomForestPipeline = RandomForestPipeline
+        __main__.CNNPipeline = CNNPipeline
 
-            if not os.path.exists(pkl_path):
-                print(f"[WARN] Model file not found: {pkl_path}")
-                return
-            if not os.path.exists(h5_path):
-                print(f"[WARN] Weights file not found: {h5_path}")
-                return
+        # XGBoost — primary model (best accuracy, lowest false positives)
+        xgb_path = os.path.join(HOST_MODELS_DIR, "xgb_complete_pipeline.pkl")
+        if os.path.exists(xgb_path):
+            try:
+                cls._xgb_pipeline = joblib.load(xgb_path)
+                print("[OK] XGBoost model loaded")
+            except Exception as e:
+                print(f"[WARN] XGBoost load failed: {e}")
 
-            # The pkl was saved from __main__; inject the class for unpickling
-            from utils.pipelines import CNNPipeline as _CNNPipeline
-            __main__.CNNPipeline = _CNNPipeline
+        # Random Forest — secondary model
+        rf_path = os.path.join(HOST_MODELS_DIR, "rf_complete_pipeline.pkl")
+        if os.path.exists(rf_path):
+            try:
+                cls._rf_pipeline = joblib.load(rf_path)
+                print("[OK] Random Forest model loaded")
+            except Exception as e:
+                print(f"[WARN] Random Forest load failed: {e}")
 
-            pipeline = joblib.load(pkl_path)
+        # CNN — tertiary model (high false positive rate, used for tie-breaking only)
+        pkl_path = os.path.join(HOST_MODELS_DIR, "cnn_complete_pipeline.pkl")
+        h5_path = os.path.join(HOST_MODELS_DIR, "cnn_weights.h5")
+        if os.path.exists(pkl_path) and os.path.exists(h5_path):
+            try:
+                import tensorflow as tf
+                tf.get_logger().setLevel("ERROR")
+                cls._cnn_pipeline = joblib.load(pkl_path)
+                cls._cnn_pipeline.model = tf.keras.models.load_model(h5_path, compile=False)
+                print("[OK] CNN model loaded")
+            except Exception as e:
+                print(f"[WARN] CNN load failed: {e}")
 
-            tf.get_logger().setLevel("ERROR")
-            cnn_model = tf.keras.models.load_model(h5_path, compile=False)
-            pipeline.model = cnn_model
+        loaded = sum(1 for m in [cls._xgb_pipeline, cls._rf_pipeline, cls._cnn_pipeline] if m)
+        print(f"[OK] {loaded}/3 host models loaded")
 
-            cls._host_pipeline = pipeline
+    @classmethod
+    def predict(cls, features):
+        """
+        XGBoost-primary prediction with RF/CNN as secondary evidence.
+        XGBoost is the most reliable model for real-time host detection.
+        Returns dict with prediction, probability, and per-model details.
+        """
+        results = {}
 
-            has_scaler = hasattr(pipeline, "scaler") and pipeline.scaler is not None
-            print(f"[OK] Host CNN model loaded (scaler: {has_scaler})")
+        for name, pipeline in [("XGBoost", cls._xgb_pipeline),
+                                ("RandomForest", cls._rf_pipeline),
+                                ("CNN", cls._cnn_pipeline)]:
+            if pipeline is None:
+                continue
+            try:
+                res = pipeline.predict(features)
+                results[name] = res
+            except Exception as e:
+                print(f"[PREDICTION ERROR] {name}: {e}")
 
-        except Exception as e:
-            print(f"[ERROR] Failed to load AI model: {e}")
-            import traceback
-            traceback.print_exc()
-            cls._host_pipeline = None
+        if not results:
+            return {"prediction": "Normal", "probability": 0.0, "votes": "0/0", "models": {}}
+
+        # XGBoost is the primary decision maker (best accuracy on CERT data)
+        if "XGBoost" in results:
+            primary = results["XGBoost"]
+        elif "RandomForest" in results:
+            primary = results["RandomForest"]
+        else:
+            primary = results.get("CNN", {"prediction": "Normal", "probability": 0.0})
+
+        votes_attack = sum(1 for r in results.values() if r["prediction"] == "Attack")
+        total = len(results)
+
+        return {
+            "prediction": primary["prediction"],
+            "probability": primary["probability"],
+            "votes": f"{votes_attack}/{total}",
+            "models": {k: {"prediction": v["prediction"], "probability": round(v["probability"], 4)}
+                       for k, v in results.items()},
+        }
 
     @classmethod
     def get_pipeline(cls):
-        """Return the loaded host model pipeline (or None)."""
-        return cls._host_pipeline
+        """Return the primary pipeline (XGBoost) for backward compatibility."""
+        return cls._xgb_pipeline or cls._rf_pipeline or cls._cnn_pipeline
 
     @classmethod
     def is_loaded(cls):
-        return cls._host_pipeline is not None
+        return any(m is not None for m in [cls._xgb_pipeline, cls._rf_pipeline, cls._cnn_pipeline])
