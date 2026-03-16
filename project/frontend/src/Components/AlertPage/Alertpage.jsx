@@ -2,25 +2,17 @@ import { useEffect, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import Sidebar from "../Sidebar/Sidebar";
 import API_BASE from "../../config";
+import socket from "../../socket";
 
 export default function AlertsPage() {
   const navigate = useNavigate();
   const [alerts, setAlerts] = useState([]);
-  const [stats, setStats] = useState({ total: 0, critical: 0, high: 0, medium: 0, low: 0 });
 
   const fetchAlerts = async () => {
     try {
       const res = await fetch(`${API_BASE}/api/alerts`);
       const data = await res.json();
       setAlerts(data);
-
-      setStats({
-        total: data.length,
-        critical: data.filter(a => a.severity === "Critical").length,
-        high: data.filter(a => a.severity === "High").length,
-        medium: data.filter(a => a.severity === "Medium").length,
-        low: data.filter(a => a.severity === "Low").length,
-      });
     } catch (err) {
       console.error("Alerts fetch error:", err);
     }
@@ -28,18 +20,17 @@ export default function AlertsPage() {
 
   useEffect(() => {
     fetchAlerts();
-    const interval = setInterval(fetchAlerts, 3000);
-    return () => clearInterval(interval);
-  }, []);
+    const interval = setInterval(fetchAlerts, 5000);
 
-  const getSeverityColor = (severity) => {
-    switch (severity) {
-      case "Critical": return "critical";
-      case "High": return "high";
-      case "Medium": return "medium";
-      default: return "low";
-    }
-  };
+    socket.on("new_alert", (alert) => {
+      setAlerts(prev => [alert, ...prev].slice(0, 100));
+    });
+
+    return () => {
+      clearInterval(interval);
+      socket.off("new_alert");
+    };
+  }, []);
 
   return (
     <div className="dashboard">
@@ -60,23 +51,7 @@ export default function AlertsPage() {
         <div className="alerts-stats">
           <div className="stat-card">
             <h4>Total Alerts</h4>
-            <h2>{stats.total}</h2>
-          </div>
-          <div className="stat-card critical">
-            <h4>Critical</h4>
-            <h2>{stats.critical}</h2>
-          </div>
-          <div className="stat-card high">
-            <h4>High</h4>
-            <h2>{stats.high}</h2>
-          </div>
-          <div className="stat-card medium">
-            <h4>Medium</h4>
-            <h2>{stats.medium}</h2>
-          </div>
-          <div className="stat-card low">
-            <h4>Low</h4>
-            <h2>{stats.low}</h2>
+            <h2>{alerts.length}</h2>
           </div>
         </div>
 
@@ -89,7 +64,6 @@ export default function AlertsPage() {
                 <th>ID</th>
                 <th>Host</th>
                 <th>Threat</th>
-                <th>Severity</th>
                 <th>Action Taken</th>
                 <th>Time</th>
                 <th>Details</th>
@@ -100,13 +74,8 @@ export default function AlertsPage() {
                 <tr key={alert.id}>
                   <td>ALT-{String(alert.id).padStart(4, '0')}</td>
                   <td>{alert.host_name}</td>
-                  <td>{alert.threat}</td>
-                  <td>
-                    <span className={`badge ${getSeverityColor(alert.severity)}`}>
-                      {alert.severity}
-                    </span>
-                  </td>
-                  <td style={{ color: "#ef4444", fontWeight: "bold" }}>{alert.action}</td>
+                  <td style={{ color: "#ef4444", fontWeight: "bold" }}>{alert.threat}</td>
+                  <td style={{ color: "#f97316", fontWeight: "bold" }}>{alert.action}</td>
                   <td>{alert.time ? new Date(alert.time).toLocaleString() : "N/A"}</td>
                   <td>
                     <button className="view-logs-btn" onClick={() => navigate(`/host/${alert.host_name}`)}>
@@ -115,7 +84,7 @@ export default function AlertsPage() {
                   </td>
                 </tr>
               )) : (
-                <tr><td colSpan="7" className="empty-logs">No alerts detected. System is secure.</td></tr>
+                <tr><td colSpan="6" className="empty-logs">No alerts detected. System is secure.</td></tr>
               )}
             </tbody>
           </table>
