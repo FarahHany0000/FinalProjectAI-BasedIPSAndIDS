@@ -173,79 +173,109 @@ FEATURE_NAMES = [
 ]
 
 
+def _count_recent_files(max_age_seconds=300, max_scan_time=3):
+    """
+    Count files modified within the last N seconds in user home dirs.
+    Caps scan time to avoid blocking on large directories.
+    """
+    home = os.path.expanduser("~")
+    scan_dirs = [
+        os.path.join(home, "Desktop"),
+        os.path.join(home, "Downloads"),
+        os.path.join(home, "Documents"),
+    ]
+    now_ts = time.time()
+    deadline = now_ts + max_scan_time
+    count = 0
+
+    for scan_root in scan_dirs:
+        if not os.path.exists(scan_root):
+            continue
+        for base, dirs, files in os.walk(scan_root):
+            if time.time() > deadline:
+                return count
+            # Skip deep/hidden/large dirs
+            dirs[:] = [d for d in dirs if not d.startswith('.') and d not in
+                       ('node_modules', '__pycache__', '.git', 'venv', '.venv')]
+            for name in files:
+                try:
+                    path = os.path.join(base, name)
+                    if now_ts - os.stat(path).st_mtime <= max_age_seconds:
+                        count += 1
+                except Exception:
+                    pass
+    return count
+
+
+def _net_snapshot():
+    """Capture current network counters + connection stats."""
+    c = psutil.net_io_counters()
+    conns = psutil.net_connections(kind='inet')
+    return {
+        "bytes_sent": c.bytes_sent,
+        "bytes_recv": c.bytes_recv,
+        "packets_sent": c.packets_sent,
+        "packets_recv": c.packets_recv,
+        "connections": len(conns),
+        "established": sum(1 for x in conns if x.status == "ESTABLISHED"),
+    }
+
+
 def collect_features(window_seconds):
     """
-    Collect 15 features by sampling system metrics over a time window.
-    Based on the proven approach from Host LIVE Test.py (next try).
-
+    Collect 15 CERT features matching the proven Host LIVE Test.py approach.
+    Uses network snapshots + recent file counting (NOT raw disk I/O).
     Returns (features_list, extras_dict)
     """
-    now = datetime.now()
-    hour = now.hour
-    is_weekend = 1 if now.weekday() >= 5 else 0
-    is_after_hours = 1 if (hour < 8 or hour > 18) else 0
-
     # Snapshot before
-    net_start = psutil.net_io_counters()
-    disk_start = psutil.disk_io_counters()
-
+    prev = _net_snapshot()
     time.sleep(window_seconds)
 
     # Snapshot after
-    net_end = psutil.net_io_counters()
-    disk_end = psutil.disk_io_counters()
+    now = datetime.now()
+    curr = _net_snapshot()
+    hour = now.hour
+    weekend = 1 if now.weekday() >= 5 else 0
+    after_hours = 1 if (hour < 8 or hour > 18) else 0
 
-    # ── Logon features ──
-    users = psutil.users()
-    total_logons = float(len(users) * 5)
-    unique_hosts = set(u.host for u in users if u.host)
-    unique_pcs_logon = float(len(unique_hosts)) if unique_hosts else 1.0
+    # Deltas
+    d_packets_sent = curr["packets_sent"] - prev["packets_sent"]
+    d_packets_recv = curr["packets_recv"] - prev["packets_recv"]
+    total_packets = max(0, d_packets_sent + d_packets_recv)
 
-    # ── Device/Network activity (packet deltas) ──
-    net_ops = (
-        (net_end.packets_sent - net_start.packets_sent)
-        + (net_end.packets_recv - net_start.packets_recv)
-    )
-    total_device_activities = float(net_ops)
+    # File activity — count recently modified files (same as "next try")
+    recent_files = _count_recent_files(300)
 
-    # ── File/Disk activity (I/O operation deltas) ──
-    disk_ops = (
-        (disk_end.read_count - disk_start.read_count)
-        + (disk_end.write_count - disk_start.write_count)
-    )
-    total_file_activities = float(disk_ops)
-    unique_files = float(max(1, int(disk_ops * 0.1)))
+    # ── Build 15 features in exact model order ──
+    total_logons = float(curr["connections"])
+    total_device_activities = float(total_packets)
+    total_file_activities = float(recent_files)
 
-    # After-hours proportional to activity, not binary
-    after_hours_logons = float(is_after_hours * total_logons)
-    after_hours_device = float(is_after_hours * total_device_activities)
-    after_hours_files = float(is_after_hours * total_file_activities)
-
-    # ── 15 features in exact model order ──
     features = [
-        total_logons,                            # 0: total_logons
-        float(hour),                             # 1: avg_logon_hour
-        0.5,                                     # 2: std_logon_hour
-        float(is_weekend * total_logons),         # 3: weekend_logons
-        after_hours_logons,                       # 4: after_hours_logons
-        unique_pcs_logon,                         # 5: unique_pcs_logon
-        total_device_activities,                  # 6: total_device_activities
-        1.0 if net_ops > 0 else 0.0,             # 7: unique_pcs_device
-        float(hour),                             # 8: avg_device_hour
-        after_hours_device,                       # 9: after_hours_device
-        total_file_activities,                    # 10: total_file_activities
-        unique_files,                            # 11: unique_files
-        1.0 if disk_ops > 0 else 0.0,           # 12: unique_pcs_file
-        float(hour),                             # 13: avg_file_hour
-        after_hours_files,                        # 14: after_hours_files
+        total_logons,                                    # 0: total_logons
+        float(hour),                                     # 1: avg_logon_hour
+        0.5 if total_logons > 0 else 0.0,               # 2: std_logon_hour
+        float(weekend * total_logons),                   # 3: weekend_logons
+        float(after_hours * total_logons),               # 4: after_hours_logons
+        1.0,                                             # 5: unique_pcs_logon
+        total_device_activities,                         # 6: total_device_activities
+        1.0 if total_packets > 0 else 0.0,              # 7: unique_pcs_device
+        float(hour),                                     # 8: avg_device_hour
+        float(after_hours * total_device_activities),    # 9: after_hours_device
+        total_file_activities,                           # 10: total_file_activities
+        float(recent_files),                             # 11: unique_files
+        1.0 if recent_files > 0 else 0.0,               # 12: unique_pcs_file
+        float(hour),                                     # 13: avg_file_hour
+        float(after_hours * total_file_activities),      # 14: after_hours_files
     ]
 
     extras = {
-        "net_packets_delta": int(net_ops),
-        "disk_ops_delta": int(disk_ops),
-        "is_after_hours": is_after_hours,
-        "is_weekend": is_weekend,
-        "active_users": len(users),
+        "net_packets_delta": int(total_packets),
+        "connections": curr["connections"],
+        "established": curr["established"],
+        "recent_files": recent_files,
+        "is_after_hours": after_hours,
+        "is_weekend": weekend,
         "hour": hour,
     }
 
@@ -420,7 +450,7 @@ def run_agent():
                 print(
                     f"[{ts}] [{status_icon}] "
                     f"Threat={threat} | Action={action} | "
-                    f"net={extras['net_packets_delta']} disk={extras['disk_ops_delta']}"
+                    f"conns={extras['connections']} pkts={extras['net_packets_delta']} files={extras['recent_files']}"
                 )
                 consecutive_errors = 0
 
