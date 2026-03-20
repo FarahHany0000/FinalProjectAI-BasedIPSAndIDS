@@ -4,6 +4,13 @@ __pycache__/
 *.db
 instance/
 venv/
+env/
 .agent_id
 node_modules/
 dist/
+*attack_simulation*
+*simulation*
+*.pcap
+*.log
+attacks_log.csv
+sim_results/
