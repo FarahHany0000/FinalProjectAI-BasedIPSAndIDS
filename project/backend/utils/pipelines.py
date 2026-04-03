@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """
-استخدام الموديلات - Random Forest, XGBoost, CNN
-Raw numbers in -> Prediction out
+Model helper pipelines: Random Forest, XGBoost, CNN.
+Raw numbers in -> Prediction out.
 """
 
 import joblib

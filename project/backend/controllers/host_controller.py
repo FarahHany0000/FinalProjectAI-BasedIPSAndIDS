@@ -4,13 +4,14 @@ from models.host import Host
 from models.alert import Alert
 from utils.model_loader import ModelLoader
 from utils.constants import EXPECTED_FEATURE_COUNT
+from utils.response_orchestrator import InsiderThreatResponseOrchestrator
 
 
 class HostController:
     """Business logic for host agent reports and predictions."""
 
     @staticmethod
-    def process_report(agent_id, host_name, ip, features):
+    def process_report(agent_id, host_name, ip, features, activity_type="FILE"):
         """
         Receive 15 features from the agent, run XGBoost prediction, update DB.
         Returns dict with prediction/probability/action.
@@ -22,6 +23,14 @@ class HostController:
 
         threat, action = "Normal", "No Action"
         probability = 0.0
+        prevention_result = {
+            "test_mode": True,
+            "activity_type": activity_type,
+            "level": "NONE",
+            "action": "No Preventive Action",
+            "response_message": "No prevention triggered.",
+            "popup": None,
+        }
 
         # ── AI Prediction (XGBoost primary) ──
         if ModelLoader.is_loaded():
@@ -39,6 +48,16 @@ class HostController:
                 print(f"[PREDICTION ERROR] {e}")
         else:
             print("[WARN] No model loaded — returning Normal.")
+
+        prevention_result = InsiderThreatResponseOrchestrator.evaluate_and_respond(
+            host_name=host_name,
+            activity_type=activity_type,
+            prediction=threat,
+            probability=probability,
+        )
+
+        if threat != "Normal":
+            action = prevention_result["action"]
 
         # ── Update Database ──
         now = datetime.datetime.now()
@@ -68,8 +87,20 @@ class HostController:
         socketio.emit("host_update", host.to_dict())
         if threat != "Normal":
             socketio.emit("new_alert", alert.to_dict())
+            socketio.emit("prevention_action", {
+                "host_name": host_name,
+                "ip": ip,
+                "prediction": threat,
+                "probability": probability,
+                **prevention_result,
+            })
 
-        return {"prediction": threat, "probability": probability, "action": action}
+        return {
+            "prediction": threat,
+            "probability": probability,
+            "action": action,
+            "prevention": prevention_result,
+        }
 
     @staticmethod
     def get_all_hosts():

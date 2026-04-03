@@ -78,6 +78,7 @@ def host_report():
     data = request.get_json()
     agent_id = request.headers.get("X-Agent-ID", data.get("agent_id", ""))
     ip = data.get("ip", request.remote_addr)
+    activity_type = data.get("activity_type", "FILE")
 
     try:
         # Update agent last_seen
@@ -91,6 +92,7 @@ def host_report():
             host_name=data["host_name"],
             ip=ip,
             features=data["features"],
+            activity_type=activity_type,
         )
         return jsonify(result)
 

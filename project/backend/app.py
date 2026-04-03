@@ -4,6 +4,7 @@ import datetime
 from flask import Flask, jsonify
 from extensions import db, cors, socketio
 from utils.model_loader import ModelLoader
+from utils.response_orchestrator import InsiderThreatResponseOrchestrator
 
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 
@@ -64,6 +65,11 @@ def create_app():
     app.config["SECRET_KEY"] = os.environ.get("SECRET_KEY", "ids-secret-key")
     app.config["AGENT_KEY"] = os.environ.get("AGENT_KEY", "changeme")
     app.config["HEARTBEAT_TIMEOUT"] = HEARTBEAT_TIMEOUT
+    app.config["TEST_MODE"] = os.environ.get("TEST_MODE", "true")
+    app.config["PREVENTION_LOG_PATH"] = os.environ.get(
+        "PREVENTION_LOG_PATH",
+        os.path.join(BASE_DIR, "instance", "prevention_actions.log"),
+    )
 
     # ── Extensions ──
     db.init_app(app)
@@ -74,10 +80,12 @@ def create_app():
     from routes.health import health_bp
     from routes.agent import agent_bp
     from routes.dashboard import dashboard_bp
+    from routes.prevention import prevention_bp
 
     app.register_blueprint(health_bp)
     app.register_blueprint(agent_bp)
     app.register_blueprint(dashboard_bp)
+    app.register_blueprint(prevention_bp)
 
     # ── Root page — quick status overview ──
     @app.route("/")
@@ -99,6 +107,8 @@ def create_app():
                 "stats": "/api/dashboard/stats",
                 "alerts": "/api/dashboard/alerts",
                 "agents": "/api/agents",
+                "prevention_status": "/api/prevention/status",
+                "prevention_logs": "/api/prevention/logs",
             },
         })
 
@@ -108,6 +118,7 @@ def create_app():
         os.makedirs(os.path.join(BASE_DIR, "instance"), exist_ok=True)
         db.create_all()
         ModelLoader.load()
+        InsiderThreatResponseOrchestrator.initialize_and_reset(app.config)
 
     # ── Start heartbeat monitor thread ──
     monitor = threading.Thread(target=_heartbeat_monitor, args=(app,), daemon=True)
@@ -125,6 +136,7 @@ if __name__ == "__main__":
     print("  IDS Backend Server")
     print(f"  Model loaded: {ModelLoader.is_loaded()}")
     print(f"  Agent key:    {'(default)' if agent_key == 'changeme' else '(configured)'}")
+    print(f"  Test mode:    {app.config['TEST_MODE']}")
     print(f"  Heartbeat:    {HEARTBEAT_TIMEOUT}s timeout")
     print(f"  Listening on: 0.0.0.0:5000")
     print("=" * 50)
