@@ -14,3 +14,4 @@ dist/
 *.log
 attacks_log.csv
 sim_results/
+project/backend/archive/
