@@ -10,6 +10,11 @@ BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 # Default: if no report in 30 seconds, host is considered offline
 HEARTBEAT_TIMEOUT = int(os.environ.get("HEARTBEAT_TIMEOUT", "30"))
 
+# Enable network sensor (default: True)
+ENABLE_NETWORK_SENSOR = os.environ.get("ENABLE_NETWORK_SENSOR", "true").lower() == "true"
+
+_network_agent = None  # Global reference to network sensor agent
+
 
 def _heartbeat_monitor(app):
     """
@@ -52,6 +57,44 @@ def _heartbeat_monitor(app):
             print(f"[HEARTBEAT ERROR] {e}")
 
 
+def _start_network_sensor(app):
+    """
+    Start the network IDS sensor in a background thread.
+    The sensor sniffs packets and sends alerts to /api/agent/network-alert.
+    """
+    global _network_agent
+
+    def _sensor_thread():
+        try:
+            import sys
+            import pathlib
+            sys.path.insert(0, str(pathlib.Path(__file__).resolve().parent.parent))
+
+            from agents.network_sensor.network_sensor import NetworkSensorAgent
+
+            # Load the network model
+            net_model = ModelLoader.load_network_model()
+            if not net_model:
+                print("[NETWORK SENSOR] Failed to load network model, skipping")
+                return
+
+            # Initialize and start sensor
+            _network_agent = NetworkSensorAgent(
+                model_engine=net_model,
+                hostname="NetworkSensor-1",
+                backend_url="http://127.0.0.1:5000/api/agent/network-alert",
+                agent_key=app.config.get("AGENT_KEY", "changeme"),
+            )
+            _network_agent.run_loop()
+
+        except Exception as e:
+            print(f"[NETWORK SENSOR ERROR] {e}")
+
+    sensor_daemon = threading.Thread(target=_sensor_thread, daemon=True, name="NetworkSensor")
+    sensor_daemon.start()
+    print("[OK] Network sensor thread started (running in background)")
+
+
 def create_app():
     """Application factory — creates and configures the Flask app."""
     app = Flask(__name__)
@@ -86,8 +129,9 @@ def create_app():
         from models.registered_agent import RegisteredAgent
         from models.alert import Alert
         return jsonify({
-            "service": "AI-Based IDS Backend",
+            "service": "AI-Based IDS/IPS Backend",
             "model_loaded": ModelLoader.is_loaded(),
+            "network_sensor_enabled": ENABLE_NETWORK_SENSOR,
             "total_hosts": Host.query.count(),
             "online_hosts": Host.query.filter_by(status="Online").count(),
             "registered_agents": RegisteredAgent.query.count(),
@@ -96,6 +140,7 @@ def create_app():
                 "health": "/api/agent/health",
                 "register": "/api/agent/register  [POST]",
                 "host_report": "/api/agent/host-report  [POST]",
+                "network_alert": "/api/agent/network-alert  [POST]",
                 "stats": "/api/dashboard/stats",
                 "alerts": "/api/dashboard/alerts",
                 "agents": "/api/agents",
@@ -114,6 +159,10 @@ def create_app():
     monitor.start()
     print(f"[OK] Heartbeat monitor started (timeout: {HEARTBEAT_TIMEOUT}s)")
 
+    # ── Start network sensor if enabled ──
+    if ENABLE_NETWORK_SENSOR:
+        _start_network_sensor(app)
+
     return app
 
 
@@ -121,12 +170,13 @@ if __name__ == "__main__":
     app = create_app()
 
     agent_key = app.config["AGENT_KEY"]
-    print("=" * 50)
-    print("  IDS Backend Server")
-    print(f"  Model loaded: {ModelLoader.is_loaded()}")
-    print(f"  Agent key:    {'(default)' if agent_key == 'changeme' else '(configured)'}")
-    print(f"  Heartbeat:    {HEARTBEAT_TIMEOUT}s timeout")
-    print(f"  Listening on: 0.0.0.0:5000")
-    print("=" * 50)
+    print("=" * 60)
+    print("  🔒 AI-Based IDS/IPS Backend Server")
+    print(f"  📊 Model loaded:           {ModelLoader.is_loaded()}")
+    print(f"  🌐 Network sensor:         {'ENABLED' if ENABLE_NETWORK_SENSOR else 'DISABLED'}")
+    print(f"  🔑 Agent key:              {'(default)' if agent_key == 'changeme' else '(configured)'}")
+    print(f"  ❤️  Heartbeat timeout:      {HEARTBEAT_TIMEOUT}s")
+    print(f"  📡 Listening on:           0.0.0.0:5000")
+    print("=" * 60)
 
     socketio.run(app, host="0.0.0.0", port=5000, allow_unsafe_werkzeug=True)
