@@ -16,18 +16,20 @@ body, html, #root {
   min-height: 100vh;
   background-color: #0f0f0f;
   color: #e5e5e5;
+  align-items: stretch;
 }
 
 .dashboard-content, .main-content {
   flex: 1;
+  min-width: 0;
   padding: 30px;
-  overflow-y: auto;
+  overflow-x: hidden;
 }
 
 /* ================= Sidebar (Fixed Size) ================= */
 .sidebar {
   width: 260px;
-  min-height: 100vh;
+  height: 100vh;
   background-color: #1f2937;
   padding: 24px;
   color: white;
@@ -35,6 +37,9 @@ body, html, #root {
   flex-shrink: 0;
   display: flex;
   flex-direction: column;
+  position: sticky;
+  top: 0;
+  overflow-y: auto;
 }
 
 .sidebar h2 {
@@ -236,6 +241,71 @@ th {
   font-style: italic;
 }
 
+/* ================= Prevention Popup ================= */
+.prevention-popup {
+  background: linear-gradient(180deg, rgba(239, 68, 68, 0.16), rgba(239, 68, 68, 0.08));
+  border: 1px solid rgba(239, 68, 68, 0.5);
+  border-radius: 10px;
+  padding: 14px 16px;
+  margin-bottom: 20px;
+}
+
+.prevention-popup-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 6px;
+}
+
+.prevention-popup-header strong {
+  color: #fecaca;
+  font-size: 0.95rem;
+}
+
+.prevention-popup p {
+  margin: 0;
+  color: #fee2e2;
+  font-size: 0.9rem;
+}
+
+.prevention-popup-close {
+  background: transparent;
+  border: none;
+  color: #fecaca;
+  font-size: 1rem;
+  cursor: pointer;
+}
+
+.threshold-controls {
+  display: flex;
+  align-items: end;
+  gap: 12px;
+  flex-wrap: wrap;
+}
+
+.threshold-controls label {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  font-size: 0.85rem;
+  color: #d1d5db;
+}
+
+.threshold-controls input {
+  width: 110px;
+  padding: 8px 10px;
+  border-radius: 6px;
+  border: 1px solid #374151;
+  background: #111827;
+  color: #f9fafb;
+}
+
+.success-text {
+  color: #22c55e;
+  font-size: 0.85rem;
+  margin: 8px 0 0 0;
+}
+
 /* ================= Not Found ================= */
 .notfound {
   display: flex;
@@ -250,3 +320,17 @@ th {
 
 /* ================= Error Text ================= */
 .error { color: #ef4444; font-size: 0.85rem; margin: 8px 0; }
+
+/* ================= Responsive Sidebar ================= */
+@media (max-width: 900px) {
+  .dashboard-container, .dashboard {
+    flex-direction: column;
+  }
+
+  .sidebar {
+    width: 100%;
+    height: auto;
+    max-height: none;
+    position: relative;
+  }
+}
