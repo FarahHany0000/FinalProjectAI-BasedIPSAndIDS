@@ -171,14 +171,25 @@ export default function Dashboard() {
           </table>
         </div>
 
-        {/* Model Status */}
-        <div className="panel" style={{ display: "flex", alignItems: "center", gap: "12px" }}>
-          <span style={{ fontSize: "1.2rem" }}>
-            {stats?.model_loaded ? "🟢" : "🔴"}
-          </span>
-          <span>
-            AI Model: <strong>{stats?.model_loaded ? "XGBoost — Loaded & Active" : "Not Loaded"}</strong>
-          </span>
+        {/* Model & Network Sensor Status */}
+        <div style={{ display: "flex", gap: "20px", marginBottom: "20px" }}>
+          <div className="panel" style={{ flex: 1, display: "flex", alignItems: "center", gap: "12px" }}>
+            <span style={{ fontSize: "1.2rem" }}>
+              {stats?.model_loaded ? "🟢" : "🔴"}
+            </span>
+            <span>
+              AI Model: <strong>{stats?.model_loaded ? "XGBoost — Loaded & Active" : "Not Loaded"}</strong>
+            </span>
+          </div>
+
+          <div className="panel" style={{ flex: 1, display: "flex", alignItems: "center", gap: "12px" }}>
+            <span style={{ fontSize: "1.2rem" }}>
+              {stats?.network_sensor_enabled ? "🟢" : "🔴"}
+            </span>
+            <span>
+              Network IDS (XGBoost): <strong>{stats?.network_sensor_enabled ? "Active — Monitoring traffic on VMnet1" : "Disabled"}</strong>
+            </span>
+          </div>
         </div>
 
       </div>
