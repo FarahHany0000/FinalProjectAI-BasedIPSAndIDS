@@ -1,4 +1,5 @@
 #!/usr/bin/env python
+# -*- coding: utf-8 -*-
 """
 Find the correct network interface name for Scapy on Windows.
 Maps friendly names from ipconfig to Npcap GUID-based names.
@@ -6,6 +7,11 @@ Maps friendly names from ipconfig to Npcap GUID-based names.
 import subprocess
 import sys
 import re
+import io
+
+# Fix encoding for Windows console
+if sys.platform == 'win32':
+    sys.stdout = io.TextIOWrapper(sys.stdout.buffer, encoding='utf-8', errors='replace')
 
 def get_scapy_interfaces():
     """Get all interface names that Scapy can see on Windows."""
@@ -13,7 +19,7 @@ def get_scapy_interfaces():
         from scapy.all import get_if_list
         return get_if_list()
     except Exception as e:
-        print(f"❌ Error getting interfaces: {e}")
+        print(f"ERROR: Error getting interfaces: {e}")
         return []
 
 def get_ipconfig_interfaces():
@@ -58,11 +64,11 @@ def map_interfaces():
     print("  Network Interface Detection for Scapy/Npcap")
     print("="*70 + "\n")
 
-    print("🔍 Scapy/Npcap Interfaces (what Scapy sees):")
+    print("[*] Scapy/Npcap Interfaces (what Scapy sees):")
     for iface in scapy_interfaces:
         print(f"  • {iface}")
 
-    print("\n🔍 Friendly Names (from ipconfig):")
+    print("\n[*] Friendly Names (from ipconfig):")
     for name, info in ipconfig_interfaces.items():
         ipv4 = info.get('ipv4', 'N/A')
         print(f"  • {name}")
@@ -75,7 +81,7 @@ def map_interfaces():
                         if 'vmware' in name.lower() or 'vmnet' in name.lower()}
 
     if vmware_interfaces:
-        print("\n✅ VMware/VMnet Interfaces Found:\n")
+        print("\n[+] VMware/VMnet Interfaces Found:\n")
         for idx, (name, info) in enumerate(vmware_interfaces.items(), 1):
             ipv4 = info.get('ipv4', 'N/A')
             mac = info.get('mac', 'N/A')
@@ -83,33 +89,27 @@ def map_interfaces():
             print(f"   IPv4: {ipv4}")
             print(f"   MAC: {mac}")
 
-            # Ask user if this is the one
-            print(f"   └─ Is this the interface you want to monitor? (VMnet1 for Kali?)")
-
         print("\n" + "="*70)
-        print("💡 INSTRUCTIONS:\n")
-        print("For Scapy/Npcap on Windows, you have several options:\n")
-        print("OPTION 1 - Use Friendly Name (Recommended):")
-        print('  DEFAULT_IFACE = "VMware Virtual Ethernet Adapter for VMnet1"')
-        print("\nOPTION 2 - Use Npcap GUID:")
-        print('  DEFAULT_IFACE = "\\Device\\NPF_<GUID>"')
-        print("  (Replace <GUID> with actual GUID from above)\n")
+        print("[*] INSTRUCTIONS:\n")
+        print("For Scapy/Npcap on Windows, use the FRIENDLY NAME:\n")
+        print("Edit: project/network_module/config/settings.py")
+        print("Update DEFAULT_IFACE to the name below\n")
 
         # Try to extract the correct interface
         for name in vmware_interfaces.keys():
             if 'vmnet1' in name.lower():
-                print(f"✅ DETECTED VMnet1: {name}")
-                print(f"\nAdd this to project/network_module/config/settings.py:")
+                print(f"[+] DETECTED VMnet1: {name}")
+                print(f"\nSet this in settings.py:")
                 print(f'DEFAULT_IFACE = "{name}"')
                 return name
 
         # Just use any VMware interface found
         first_vmware = list(vmware_interfaces.keys())[0]
-        print(f"\nUsing first VMware interface: {first_vmware}")
+        print(f"[+] Using first VMware interface: {first_vmware}")
         print(f'DEFAULT_IFACE = "{first_vmware}"')
         return first_vmware
     else:
-        print("\n⚠️  NO VMware Interface Found!")
+        print("\n[-] NO VMware Interface Found!")
         print("\nVerify:")
         print("  1. VMware adapter VMnet1 is enabled")
         print("  2. Npcap is installed: https://npcap.com")
@@ -117,24 +117,24 @@ def map_interfaces():
         return None
 
 def main():
-    print("\n🔍 Scanning for network interfaces...\n")
+    print("\n[*] Scanning for network interfaces...\n")
     interface = map_interfaces()
 
     if interface:
         print("\n" + "="*70)
-        print("✅ READY TO CONFIGURE!\n")
+        print("[+] READY TO CONFIGURE!\n")
         print(f"Edit: project/network_module/config/settings.py")
-        print(f'Change: DEFAULT_IFACE = "Ethernet 2"')
-        print(f'To:     DEFAULT_IFACE = "{interface}"')
+        print(f'Change DEFAULT_IFACE to: "{interface}"')
         print("="*70 + "\n")
         sys.exit(0)
     else:
         print("\n" + "="*70)
-        print("❌ CANNOT PROCEED!")
+        print("[-] CANNOT PROCEED!")
         print("Please enable VMware adapter VMnet1 first")
         print("="*70 + "\n")
         sys.exit(1)
 
 if __name__ == "__main__":
     main()
+
 

@@ -136,21 +136,12 @@ NN_PARAMS = dict(
 
 # ── Live Capture (default interface for Windows + Kali testing) ──────────────
 # VMware Network Adapter VMnet1 (Host-Only Network for Kali testing)
+# IPv4: 192.168.253.1
 #
-# ⚠️  IMPORTANT: On Windows with Npcap, use the FRIENDLY NAME from ipconfig!
-#
-# Names from ipconfig /all:
-#   "VMware Virtual Ethernet Adapter for VMnet1"
-#   "Realtek PCIe GbE Family Controller"
-#   etc.
-#
-# To find your interface:
-#   1. Run: ipconfig /all
-#   2. Look for "adapter" line
-#   3. Copy the full name (e.g., "VMware Virtual Ethernet Adapter for VMnet1")
-#   4. Paste it below
+# DETECTED & CONFIGURED for your system!
+# Run: python FIND_NETWORK_INTERFACE.py (to see all detected interfaces)
 
-DEFAULT_IFACE = "VMware Virtual Ethernet Adapter for VMnet1"
+DEFAULT_IFACE = "VMware Network Adapter VMnet1"
 
 # ── Streamlit ────────────────────────────────────────────────────────────────
 STREAMLIT_PORT = 8501
