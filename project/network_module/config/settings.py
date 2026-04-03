@@ -137,20 +137,20 @@ NN_PARAMS = dict(
 # ── Live Capture (default interface for Windows + Kali testing) ──────────────
 # VMware Network Adapter VMnet1 (Host-Only Network for Kali testing)
 #
-# ⚠️  IMPORTANT: This must match your actual network interface name!
-# Run: python FIND_NETWORK_INTERFACE.py (in project root)
-# Or:  ipconfig /all (look for VMnet1 adapter, note the "Name" value)
+# ⚠️  IMPORTANT: On Windows with Npcap, use the FRIENDLY NAME from ipconfig!
 #
-# Common names on Windows:
-#   - "Ethernet 2"
-#   - "Ethernet"
-#   - "Local Area Connection 2"
-#   - "VMnet1"
-#   - Or whatever appears in Scapy interface list
+# Names from ipconfig /all:
+#   "VMware Virtual Ethernet Adapter for VMnet1"
+#   "Realtek PCIe GbE Family Controller"
+#   etc.
 #
-# The name MUST match what Scapy sees (not the full description from ipconfig)
+# To find your interface:
+#   1. Run: ipconfig /all
+#   2. Look for "adapter" line
+#   3. Copy the full name (e.g., "VMware Virtual Ethernet Adapter for VMnet1")
+#   4. Paste it below
 
-DEFAULT_IFACE = "Ethernet 2"  # ← Update this to YOUR interface name!
+DEFAULT_IFACE = "VMware Virtual Ethernet Adapter for VMnet1"
 
 # ── Streamlit ────────────────────────────────────────────────────────────────
 STREAMLIT_PORT = 8501
