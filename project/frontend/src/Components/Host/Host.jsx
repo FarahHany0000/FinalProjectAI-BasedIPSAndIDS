@@ -1,4 +1,4 @@
-import React, { useEffect, useState } from "react";
+import React, { useEffect, useMemo, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import Sidebar from "../Sidebar/Sidebar";
 import API_BASE from "../../config";
@@ -47,6 +47,25 @@ export default function Host() {
     return (now - lastSeenDate) / 1000 < 30;
   };
 
+  const normalizedHosts = useMemo(() => {
+    const map = new Map();
+    hosts.forEach((host) => {
+      const key = `${host.host_name}|${host.ip || ""}`;
+      const prev = map.get(key);
+      const prevTs = prev?.last_seen ? new Date(prev.last_seen).getTime() : 0;
+      const curTs = host?.last_seen ? new Date(host.last_seen).getTime() : 0;
+      if (!prev || curTs >= prevTs) {
+        map.set(key, host);
+      }
+    });
+
+    return Array.from(map.values()).sort((a, b) => {
+      const aTs = a?.last_seen ? new Date(a.last_seen).getTime() : 0;
+      const bTs = b?.last_seen ? new Date(b.last_seen).getTime() : 0;
+      return bTs - aTs;
+    });
+  }, [hosts]);
+
   return (
     <div className="dashboard">
       <Sidebar />
@@ -61,7 +80,7 @@ export default function Host() {
           <h1>Hosts Real-time Monitoring</h1>
         </div>
 
-        <table>
+        <table className="hosts-table hosts-overview-table">
           <thead>
             <tr>
               <th>Host Name</th>
@@ -69,16 +88,26 @@ export default function Host() {
               <th>Status</th>
               <th>Last Seen</th>
               <th>Action Taken</th>
-              <th>Details</th>
             </tr>
           </thead>
           <tbody>
-            {hosts.length > 0 ? hosts.map((h, i) => {
+            {normalizedHosts.length > 0 ? normalizedHosts.map((h, i) => {
               const isOnline = checkOnlineStatus(h.last_seen);
               const hasPrevention = h.action && h.action !== "No Action";
 
               return (
-                <tr key={i} className={hasPrevention ? "attack-row" : (!isOnline ? "offline-row" : "")}>
+                <tr
+                  key={i}
+                  className={`${hasPrevention ? "attack-row" : (!isOnline ? "offline-row" : "")} row-clickable`}
+                  onClick={() => navigate(`/host/${h.host_name || "Unknown"}`)}
+                  onKeyDown={(e) => {
+                    if (e.key === "Enter" || e.key === " ") {
+                      navigate(`/host/${h.host_name || "Unknown"}`);
+                    }
+                  }}
+                  role="button"
+                  tabIndex={0}
+                >
                   <td><strong>{h.host_name || "Unknown"}</strong></td>
                   <td>{h.ip}</td>
                   <td>
@@ -92,15 +121,10 @@ export default function Host() {
                       {hasPrevention ? h.action : "Secure"}
                     </span>
                   </td>
-                  <td>
-                    <button className="view-logs-btn" onClick={() => navigate(`/host/${h.host_name || "Unknown"}`)}>
-                      View Logs
-                    </button>
-                  </td>
                 </tr>
               );
             }) : (
-              <tr><td colSpan="6" className="empty-logs">No hosts detected yet. Start the host agent to begin monitoring.</td></tr>
+              <tr><td colSpan="5" className="empty-logs">No hosts detected yet. Start the host agent to begin monitoring.</td></tr>
             )}
           </tbody>
         </table>

@@ -23,6 +23,9 @@ function App() {
         <Route path="/alert" element={<ProtectedRoute><Alertpage /></ProtectedRoute>} />
         <Route path="/agents" element={<ProtectedRoute><Agents /></ProtectedRoute>} />
         <Route path="/network" element={<ProtectedRoute><Network /></ProtectedRoute>} />
+        <Route path="/control" element={<ProtectedRoute><Dashboard /></ProtectedRoute>} />
+        <Route path="/control/prevention" element={<ProtectedRoute><Dashboard /></ProtectedRoute>} />
+        <Route path="/control/ai" element={<ProtectedRoute><Dashboard /></ProtectedRoute>} />
 
         <Route path='*' element={<NotFound />} />
       </Routes>

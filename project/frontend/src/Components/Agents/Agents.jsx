@@ -1,4 +1,4 @@
-import React, { useEffect, useState } from "react";
+import React, { useEffect, useMemo, useState } from "react";
 import Sidebar from "../Sidebar/Sidebar";
 import API_BASE from "../../config";
 
@@ -26,8 +26,26 @@ export default function Agents() {
     return (new Date() - new Date(lastSeen)) / 1000 < 30;
   };
 
-  const onlineCount = agents.filter(a => isOnline(a.last_seen)).length;
-  const offlineCount = agents.length - onlineCount;
+  const normalizedAgents = useMemo(() => {
+    const map = new Map();
+    agents.forEach((agent) => {
+      const key = `${agent.host_name}|${agent.ip || ""}`;
+      const prev = map.get(key);
+      const prevTs = prev?.last_seen ? new Date(prev.last_seen).getTime() : 0;
+      const curTs = agent?.last_seen ? new Date(agent.last_seen).getTime() : 0;
+      if (!prev || curTs >= prevTs) {
+        map.set(key, agent);
+      }
+    });
+    return Array.from(map.values()).sort((a, b) => {
+      const aTs = a?.last_seen ? new Date(a.last_seen).getTime() : 0;
+      const bTs = b?.last_seen ? new Date(b.last_seen).getTime() : 0;
+      return bTs - aTs;
+    });
+  }, [agents]);
+
+  const onlineCount = normalizedAgents.filter(a => isOnline(a.last_seen)).length;
+  const offlineCount = normalizedAgents.length - onlineCount;
 
   return (
     <div className="dashboard">
@@ -47,7 +65,7 @@ export default function Agents() {
         <div className="stats-grid" style={{ gridTemplateColumns: "repeat(3, 1fr)" }}>
           <div className="stat-card">
             <h4>Total Agents</h4>
-            <p>{agents.length}</p>
+            <p>{normalizedAgents.length}</p>
           </div>
           <div className="stat-card">
             <h4>Online</h4>
@@ -76,7 +94,7 @@ export default function Agents() {
               </tr>
             </thead>
             <tbody>
-              {agents.length > 0 ? agents.map((agent, i) => {
+              {normalizedAgents.length > 0 ? normalizedAgents.map((agent, i) => {
                 const online = isOnline(agent.last_seen);
                 return (
                   <tr key={i} className={!online ? "offline-row" : ""}>

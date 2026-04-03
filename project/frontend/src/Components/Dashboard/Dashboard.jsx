@@ -1,11 +1,12 @@
 import React, { useMemo, useState, useEffect } from "react";
 import Sidebar from "../Sidebar/Sidebar";
-import { useNavigate } from "react-router-dom";
+import { useNavigate, useLocation } from "react-router-dom";
 import API_BASE from "../../config";
 import socket from "../../socket";
 
 export default function Dashboard() {
   const navigate = useNavigate();
+  const location = useLocation();
   const [stats, setStats] = useState(null);
   const [hosts, setHosts] = useState([]);
   const [alerts, setAlerts] = useState([]);
@@ -133,6 +134,25 @@ export default function Dashboard() {
     };
   }, []);
 
+  useEffect(() => {
+    const path = location.pathname;
+    if (path === "/dashboardpage") {
+      setActiveTab("overview");
+      return;
+    }
+    if (path === "/control/prevention") {
+      setActiveTab("prevention");
+      return;
+    }
+    if (path === "/control/ai") {
+      setActiveTab("ai");
+      return;
+    }
+    if (path === "/control") {
+      setActiveTab("overview");
+    }
+  }, [location.pathname]);
+
   const hostRiskLookup = useMemo(() => {
     const map = new Map();
     preventionEvents.forEach((event) => {
@@ -165,7 +185,7 @@ export default function Dashboard() {
 
   return (
     <div className="dashboard-container">
-      <Sidebar dashboardMode activeTab={activeTab} onTabChange={setActiveTab} />
+      <Sidebar />
       <div className="dashboard-content">
 
         <div className="icondesign">
@@ -195,10 +215,33 @@ export default function Dashboard() {
         )}
 
         <div className="dashboard-current-view">
-          {activeTab === "overview" && <span>Current View: Overview</span>}
-          {activeTab === "prevention" && <span>Current View: Prevention Settings</span>}
-          {activeTab === "ai" && <span>Current View: AI Decisions</span>}
+          {activeTab === "overview" && <span>Overview</span>}
+          {activeTab === "prevention" && <span>Prevention Settings</span>}
+          {activeTab === "ai" && <span>AI Decisions</span>}
         </div>
+
+        {(location.pathname.startsWith("/control")) && (
+          <div className="control-selector-row">
+            <button
+              className={`tab-btn ${activeTab === "overview" ? "active" : ""}`}
+              onClick={() => navigate("/control")}
+            >
+              Overview
+            </button>
+            <button
+              className={`tab-btn ${activeTab === "prevention" ? "active" : ""}`}
+              onClick={() => navigate("/control/prevention")}
+            >
+              Prevention Settings
+            </button>
+            <button
+              className={`tab-btn ${activeTab === "ai" ? "active" : ""}`}
+              onClick={() => navigate("/control/ai")}
+            >
+              AI Decisions
+            </button>
+          </div>
+        )}
 
         {activeTab === "overview" && (
           <>
@@ -236,51 +279,56 @@ export default function Dashboard() {
 
             <div className="panel">
               <h3>Hosts Overview</h3>
-              <table className="hosts-table">
-                <thead>
-                  <tr>
-                    <th>Host Name</th>
-                    <th>IP Address</th>
-                    <th>Status</th>
-                    <th>Last Seen</th>
-                    <th>Last Risk</th>
-                    <th>Action</th>
-                    <th>Details</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {normalizedHosts.length > 0 ? normalizedHosts.map((host, idx) => {
-                    const risk = hostRiskLookup.get(`${host.host_name}|${host.ip || ""}`);
-                    return (
-                      <tr key={idx} className={host.action && host.action !== "No Action" ? "attack-row" : ""}>
-                        <td><strong>{host.host_name}</strong></td>
-                        <td>{host.ip}</td>
-                        <td>
-                          <span className={`status-badge ${host.status === "Online" ? "online" : "offline"}`}>
-                            {host.status === "Online" ? "● Online" : "○ Offline"}
-                          </span>
-                        </td>
-                        <td>{host.last_seen ? new Date(host.last_seen).toLocaleTimeString() : "N/A"}</td>
-                        <td>{typeof risk?.probability === "number" ? `${(risk.probability * 100).toFixed(1)}%` : "N/A"}</td>
-                        <td>
-                          <span
-                            className={host.action && host.action !== "No Action" ? "action-pill danger" : "action-pill safe"}
-                            title={host.action || "No Action"}
-                          >
-                            {host.action && host.action !== "No Action" ? host.action : "Secure"}
-                          </span>
-                        </td>
-                        <td>
-                          <button className="view-logs-btn" onClick={() => navigate(`/host/${host.host_name}`)}>
-                            View Logs
-                          </button>
-                        </td>
-                      </tr>
-                    );
-                  }) : (
-                    <tr><td colSpan="7" className="empty-logs">No hosts detected yet. Start the host agent to begin monitoring.</td></tr>
-                  )}
-                </tbody>
+              <table className="hosts-table hosts-overview-table hosts-overview-table-six">
+                  <thead>
+                    <tr>
+                      <th>Host Name</th>
+                      <th>IP Address</th>
+                      <th>Status</th>
+                      <th>Last Seen</th>
+                      <th>Last Risk</th>
+                      <th>Action</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {normalizedHosts.length > 0 ? normalizedHosts.map((host, idx) => {
+                      const risk = hostRiskLookup.get(`${host.host_name}|${host.ip || ""}`);
+                      return (
+                        <tr
+                          key={idx}
+                          className={`${host.action && host.action !== "No Action" ? "attack-row" : ""} row-clickable`}
+                          onClick={() => navigate(`/host/${host.host_name}`)}
+                          onKeyDown={(e) => {
+                            if (e.key === "Enter" || e.key === " ") {
+                              navigate(`/host/${host.host_name}`);
+                            }
+                          }}
+                          role="button"
+                          tabIndex={0}
+                        >
+                          <td><strong>{host.host_name}</strong></td>
+                          <td>{host.ip}</td>
+                          <td>
+                            <span className={`status-badge ${host.status === "Online" ? "online" : "offline"}`}>
+                              {host.status === "Online" ? "● Online" : "○ Offline"}
+                            </span>
+                          </td>
+                          <td>{host.last_seen ? new Date(host.last_seen).toLocaleTimeString() : "N/A"}</td>
+                          <td>{typeof risk?.probability === "number" ? `${(risk.probability * 100).toFixed(1)}%` : "N/A"}</td>
+                          <td>
+                            <span
+                              className={host.action && host.action !== "No Action" ? "action-pill danger" : "action-pill safe"}
+                              title={host.action || "No Action"}
+                            >
+                              {host.action && host.action !== "No Action" ? host.action : "Secure"}
+                            </span>
+                          </td>
+                        </tr>
+                      );
+                    }) : (
+                      <tr><td colSpan="6" className="empty-logs">No hosts detected yet. Start the host agent to begin monitoring.</td></tr>
+                    )}
+                  </tbody>
               </table>
             </div>
 
