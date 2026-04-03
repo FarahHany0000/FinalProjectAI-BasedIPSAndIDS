@@ -1,126 +1,153 @@
-# advanced_agent.py - Advanced IDS + IPS Agent with Scapy
+"""
+Network Sensor Agent
+====================
+Captures live network traffic and detects network-layer attacks using
+the integrated network IDS module with XGBoost/RandomForest/NN models.
+
+Uses sliding-window feature extraction (10 packets) with 48 behavioral features
+to detect: PortScan, SSHBrute, FTPBrute, ARPSpoof, SYNFlood attacks.
+"""
 import time
-import psutil
-import threading
-import requests
-from scapy.all import sniff, IP, TCP, UDP
+import sys
+import pathlib
+import logging
 
-BACKEND_URL = "http://127.0.0.1:5000/predict"
-HOSTNAME = "Host-1"
-SCAN_INTERVAL = 10
-CAPTURE_DURATION = 5
+# Add project paths
+sys.path.insert(0, str(pathlib.Path(__file__).resolve().parent.parent.parent))
 
-prev_net_stats = psutil.net_io_counters()
-prev_time = time.time()
+from network_module.sniffer.live_capture import LiveSniffer
+from network_module.sniffer.pcap_replay import PcapPlayer
+from network_module.config.settings import DEFAULT_IFACE, CONFIDENCE_THRESHOLD
 
-def extract_packet_features(pkt):
-    features = {}
-    if IP in pkt:
-        ip = pkt[IP]
-        features['src_bytes'] = len(pkt)
-        features['dst_bytes'] = len(pkt)
-        features['src_port'] = pkt.sport if TCP in pkt or UDP in pkt else 0
-        features['dst_port'] = pkt.dport if TCP in pkt or UDP in pkt else 0
-        features['protocol'] = ip.proto
-        features['ttl'] = ip.ttl
-    return features
+logger = logging.getLogger(__name__)
 
-def sniff_packets(duration=CAPTURE_DURATION):
-    packets = []
-    def store(pkt):
-        f = extract_packet_features(pkt)
-        if f:
-            packets.append(f)
-    sniff(prn=store, timeout=duration)
-    return packets
+BACKEND_URL = "http://127.0.0.1:5000/alert"
+HOSTNAME = "NetworkSensor-1"
+CHECK_INTERVAL = 2  # Check for results every N seconds
 
-def aggregate_features(packets):
-    if not packets:
-        return None
-    src_bytes = [p['src_bytes'] for p in packets]
-    dst_bytes = [p['dst_bytes'] for p in packets]
-    ttl_list = [p['ttl'] for p in packets]
 
-    agg = {
-        'init_fwd_win_byts': max(src_bytes),
-        'fwd_seg_size_min': min(src_bytes),
-        'subflow_fwd_byts': sum(src_bytes),
-        'flow_iat_max': max(ttl_list),
-        'fwd_iat_max': max(dst_bytes),
-        'fwd_iat_tot': sum(dst_bytes),
-        'totlen_fwd_pkts': sum(src_bytes)+sum(dst_bytes),
-        'flow_iat_mean': int(sum(src_bytes)/len(src_bytes)),
-        'bwd_pktss': len(packets),
-        'flow_iat_min': min(ttl_list),
-        'fwd_header_len': 20,
-        'fwd_seg_size_avg': int(sum(src_bytes)/len(src_bytes)),
-        'fwd_iat_min': min(ttl_list),
-        'fwd_iat_mean': int(sum(src_bytes)/len(src_bytes)),
-        'init_bwd_win_byts': sum(dst_bytes),
-        'fwd_pktss': len(packets),
-        'flow_pktss': len(packets),
-        'fwd_pkt_len_max': max(src_bytes),
-        'fwd_pkt_len_mean': int(sum(src_bytes)/len(src_bytes)),
-        'flow_duration': CAPTURE_DURATION
-    }
-    return agg
+class NetworkSensorAgent:
+    """
+    Network IDS Agent — captures packets and feeds predictions to backend.
+    """
 
-def collect_system_features():
-    global prev_net_stats, prev_time
-    now = time.time()
-    duration = now - prev_time
-    stats = psutil.net_io_counters()
-    features = {
-        "init_fwd_win_byts": stats.bytes_sent - prev_net_stats.bytes_sent,
-        "fwd_seg_size_min": 60,
-        "subflow_fwd_byts": stats.bytes_sent - prev_net_stats.bytes_sent,
-        "flow_iat_max": duration*1000,
-        "fwd_iat_max": duration*1000,
-        "fwd_iat_tot": duration*1000,
-        "totlen_fwd_pkts": stats.packets_sent - prev_net_stats.packets_sent,
-        "flow_iat_mean": duration*1000,
-        "bwd_pktss": stats.packets_recv - prev_net_stats.packets_recv,
-        "flow_iat_min": 1,
-        "fwd_header_len": 20,
-        "fwd_seg_size_avg": (stats.bytes_sent - prev_net_stats.bytes_sent)/max(1, stats.packets_sent - prev_net_stats.packets_sent),
-        "fwd_iat_min": 1,
-        "fwd_iat_mean": duration*1000,
-        "init_bwd_win_byts": stats.bytes_recv - prev_net_stats.bytes_recv,
-        "fwd_pktss": stats.packets_sent - prev_net_stats.packets_sent,
-        "flow_pktss": (stats.packets_sent - prev_net_stats.packets_sent)+(stats.packets_recv - prev_net_stats.packets_recv),
-        "fwd_pkt_len_max": 1500,
-        "fwd_pkt_len_mean": (stats.bytes_sent - prev_net_stats.bytes_sent)/max(1, stats.packets_sent - prev_net_stats.packets_sent),
-        "flow_duration": duration
-    }
-    prev_net_stats = stats
-    prev_time = now
-    return features
+    def __init__(self, model_engine, iface: str = None, hostname: str = HOSTNAME):
+        """
+        Parameters
+        ----------
+        model_engine : loaded model with hierarchical_predict() method
+        iface : network interface to sniff on (default: settings.DEFAULT_IFACE)
+        hostname : identifier for this sensor
+        """
+        self.model_engine = model_engine
+        self.sniffer = LiveSniffer(
+            engine=model_engine,
+            iface=iface or DEFAULT_IFACE,
+            threshold=CONFIDENCE_THRESHOLD
+        )
+        self.hostname = hostname
+        self.running = False
 
-def send_features():
-    packets = sniff_packets()
-    agg_features = aggregate_features(packets)
-    sys_features = collect_system_features()
-    features = agg_features.copy() if agg_features else {}
-    features.update(sys_features)
+    def start(self):
+        """Start packet capture."""
+        if not self.running:
+            self.running = True
+            self.sniffer.start()
+            print(f"[{self.hostname}] Network sensor started")
 
-    payload = {"host": HOSTNAME, "features": features}
-    try:
-        resp = requests.post(BACKEND_URL, json=payload, timeout=5)
-        if resp.status_code == 200:
-            r = resp.json()
-            print(f"[{r['date']}] Attack: {r['type']} | Severity: {r['severity']} | Action: {r['action']} | Final State: {r['final_state']}")
-            if r['severity'] in ["High","Critical"]:
-                print(f"⚠️ Prevention Applied: {r['action']}")
-        else:
-            print(f"Prediction error: {resp.json()}")
-    except Exception as e:
-        print(f"Connection error: {e}")
+    def stop(self):
+        """Stop packet capture."""
+        if self.running:
+            self.running = False
+            self.sniffer.stop()
+            print(f"[{self.hostname}] Network sensor stopped")
 
-def main_loop():
-    while True:
-        send_features()
-        time.sleep(SCAN_INTERVAL)
+    def get_alerts(self):
+        """Get detected attacks from the sniffer queue."""
+        return self.sniffer.get_results()
+
+    def get_stats(self):
+        """Get packet/window statistics."""
+        return self.sniffer.get_stats()
+
+    def process_results_and_send(self):
+        """Process buffered results and send alerts to backend."""
+        alerts = self.get_alerts()
+        for alert in alerts:
+            if alert.get("alert"):
+                self._send_alert(alert)
+
+    def _send_alert(self, alert: dict):
+        """Send attack alert to backend API."""
+        try:
+            import requests
+            payload = {
+                "source": self.hostname,
+                "timestamp": alert.get("timestamp"),
+                "attack_type": alert.get("label"),
+                "confidence": float(alert.get("confidence", 0)),
+                "n_packets": int(alert.get("n_packets", 0)),
+            }
+            resp = requests.post(BACKEND_URL, json=payload, timeout=5)
+            if resp.status_code != 200:
+                logger.warning(f"Backend alert failed: {resp.status_code}")
+        except Exception as e:
+            logger.error(f"Error sending alert: {e}")
+
+    def run_loop(self, duration: int = None):
+        """
+        Main loop: continuously check for attacks.
+
+        Parameters
+        ----------
+        duration : run for N seconds (None = infinite)
+        """
+        self.start()
+        start_time = time.time()
+
+        try:
+            while True:
+                # Check for new detections
+                self.process_results_and_send()
+
+                # Optional timeout
+                if duration and (time.time() - start_time) > duration:
+                    break
+
+                time.sleep(CHECK_INTERVAL)
+        except KeyboardInterrupt:
+            print(f"\n[{self.hostname}] Interrupted")
+        finally:
+            self.stop()
+            stats = self.get_stats()
+            print(f"[{self.hostname}] Final Stats: {stats}")
+
+
+def test_with_pcap(pcap_file: str, model_engine):
+    """Test attack detection on a saved PCAP file."""
+    player = PcapPlayer(engine=model_engine, threshold=CONFIDENCE_THRESHOLD)
+    results = player.process_pcap(pcap_file, realtime_pace=False)
+
+    # Summarize results
+    print(f"\n[PCAP Analysis] {pcap_file}")
+    print(f"  Total windows: {len(results)}")
+    print(f"  Attacks detected: {sum(1 for r in results if r['alert'])}")
+
+    # Show top detections
+    attacks = [r for r in results if r["alert"]]
+    if attacks:
+        print(f"\n  Top attacks:")
+        for r in sorted(attacks, key=lambda x: x["confidence"], reverse=True)[:10]:
+            print(f"    {r['label']:15} conf={r['confidence']:.3f}  win#{r['window_id']}")
+
+    return results
+
 
 if __name__ == "__main__":
-    print("Starting Advanced IDS + IPS Agent...")
-    main_loop()
+    print("Network Sensor Agent Module")
+    print("  Use: from network_sensor import NetworkSensorAgent, test_with_pcap")
+    print("  Example:")
+    print("    from network_module.backend.ai_models.network_xgb import load_engine")
+    print("    engine = load_engine()")
+    print("    agent = NetworkSensorAgent(engine)")
+    print("    agent.run_loop()")
