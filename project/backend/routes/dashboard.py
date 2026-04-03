@@ -15,8 +15,13 @@ def get_hosts():
 @dashboard_bp.route("/api/agents", methods=["GET"])
 def get_agents():
     """Return all registered agents (for frontend)."""
-    agents = RegisteredAgent.query.all()
-    return jsonify([a.to_dict() for a in agents])
+    agents = RegisteredAgent.query.order_by(RegisteredAgent.last_seen.desc()).all()
+    dedup = {}
+    for agent in agents:
+        key = f"{(agent.host_name or '').strip().lower()}|{agent.ip or ''}"
+        if key not in dedup:
+            dedup[key] = agent
+    return jsonify([a.to_dict() for a in dedup.values()])
 
 
 @dashboard_bp.route("/api/alerts/<hostname>", methods=["GET"])

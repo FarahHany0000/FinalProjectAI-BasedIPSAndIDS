@@ -41,6 +41,38 @@ def register_agent():
             "is_approved": agent.is_approved,
         })
 
+    # Recovery path: if this physical device already exists with another agent_id,
+    # rebind to the current id instead of creating duplicate rows.
+    existing_device = None
+    if ip:
+        existing_device = (
+            RegisteredAgent.query
+            .filter_by(host_name=host_name, ip=ip)
+            .order_by(RegisteredAgent.last_seen.desc())
+            .first()
+        )
+    if not existing_device:
+        existing_device = (
+            RegisteredAgent.query
+            .filter_by(host_name=host_name)
+            .order_by(RegisteredAgent.last_seen.desc())
+            .first()
+        )
+
+    if existing_device:
+        existing_device.agent_id = agent_id
+        existing_device.host_name = host_name
+        existing_device.ip = ip
+        existing_device.os_info = os_info
+        existing_device.last_seen = now
+        existing_device.status = "Online"
+        db.session.commit()
+        return jsonify({
+            "status": "rebound_existing_device",
+            "agent_id": agent_id,
+            "is_approved": existing_device.is_approved,
+        })
+
     # New registration
     agent = RegisteredAgent(
         agent_id=agent_id,

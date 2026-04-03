@@ -53,6 +53,31 @@ def _heartbeat_monitor(app):
             print(f"[HEARTBEAT ERROR] {e}")
 
 
+def _merge_duplicate_agents():
+    """
+    Merge duplicate registered agent rows that represent the same physical device.
+    Keeps the newest row per (host_name, ip), preserving the freshest status.
+    """
+    from models.registered_agent import RegisteredAgent
+
+    agents = RegisteredAgent.query.order_by(RegisteredAgent.last_seen.desc()).all()
+    dedup = {}
+    duplicates = []
+
+    for agent in agents:
+        key = f"{(agent.host_name or '').strip().lower()}|{agent.ip or ''}"
+        if key not in dedup:
+            dedup[key] = agent
+        else:
+            duplicates.append(agent)
+
+    if duplicates:
+        for row in duplicates:
+            db.session.delete(row)
+        db.session.commit()
+        print(f"[CLEANUP] Removed {len(duplicates)} duplicate registered agent row(s).")
+
+
 def create_app():
     """Application factory — creates and configures the Flask app."""
     app = Flask(__name__)
@@ -118,6 +143,7 @@ def create_app():
         from models import Host, Alert, RegisteredAgent  # noqa: F401
         os.makedirs(os.path.join(BASE_DIR, "instance"), exist_ok=True)
         db.create_all()
+        _merge_duplicate_agents()
         ModelLoader.load()
         InsiderThreatResponseOrchestrator.initialize_and_reset(app.config)
 

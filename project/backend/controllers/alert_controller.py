@@ -32,8 +32,16 @@ class AlertController:
             Alert.time >= datetime.datetime.now() - datetime.timedelta(hours=1)
         ).count()
 
-        registered_agents = RegisteredAgent.query.count()
-        online_agents = RegisteredAgent.query.filter_by(status="Online").count()
+        agents = RegisteredAgent.query.order_by(RegisteredAgent.last_seen.desc()).all()
+        dedup = {}
+        for agent in agents:
+            key = f"{(agent.host_name or '').strip().lower()}|{agent.ip or ''}"
+            if key not in dedup:
+                dedup[key] = agent
+
+        unique_agents = list(dedup.values())
+        registered_agents = len(unique_agents)
+        online_agents = sum(1 for a in unique_agents if a.status == "Online")
 
         from utils.model_loader import ModelLoader
 
