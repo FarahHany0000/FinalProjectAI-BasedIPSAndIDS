@@ -44,8 +44,15 @@ export default function Sidebar() {
               Network
             </NavLink>
           </li>
+          <li>
+            <NavLink to="/control"
+              className={({ isActive }) => isActive ? "menu-link active" : "menu-link"}>
+              Control
+            </NavLink>
+          </li>
         </ul>
       </nav>
+
       <button className="logout-btn" onClick={handleLogout}>
         Logout
       </button>
