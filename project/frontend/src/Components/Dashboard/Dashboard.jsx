@@ -9,6 +9,12 @@ export default function Dashboard() {
   const [stats, setStats] = useState(null);
   const [hosts, setHosts] = useState([]);
   const [alerts, setAlerts] = useState([]);
+  const [preventionNotice, setPreventionNotice] = useState(null);
+  const [preventionEvents, setPreventionEvents] = useState([]);
+  const [preventionLogs, setPreventionLogs] = useState([]);
+  const [thresholds, setThresholds] = useState({ low: "0.50", medium: "0.70", critical: "0.90" });
+  const [thresholdStatus, setThresholdStatus] = useState("");
+  const [thresholdError, setThresholdError] = useState("");
 
   const fetchData = async () => {
     try {
@@ -20,13 +26,77 @@ export default function Dashboard() {
       setStats(await statsRes.json());
       setHosts(await hostsRes.json());
       setAlerts(await alertsRes.json());
+
+      const logsRes = await fetch(`${API_BASE}/api/prevention/logs?limit=20`);
+      if (logsRes.ok) {
+        setPreventionLogs(await logsRes.json());
+      }
     } catch (err) {
       console.error("Dashboard fetch error:", err);
     }
   };
 
+  const fetchThresholds = async () => {
+    try {
+      const res = await fetch(`${API_BASE}/api/prevention/thresholds`);
+      if (!res.ok) {
+        setThresholdError("Threshold API is not available on current backend.");
+        return;
+      }
+      const data = await res.json();
+      setThresholds({
+        low: Number(data.low ?? 0.5).toFixed(2),
+        medium: Number(data.medium ?? 0.7).toFixed(2),
+        critical: Number(data.critical ?? 0.9).toFixed(2),
+      });
+      setThresholdError("");
+    } catch (err) {
+      setThresholdError("Cannot load thresholds from backend.");
+      console.error("Threshold fetch error:", err);
+    }
+  };
+
+  const saveThresholds = async () => {
+    setThresholdStatus("");
+    setThresholdError("");
+    const payload = {
+      low: Number(thresholds.low),
+      medium: Number(thresholds.medium),
+      critical: Number(thresholds.critical),
+    };
+
+    if (!(payload.low >= 0 && payload.low < payload.medium && payload.medium < payload.critical && payload.critical <= 1)) {
+      setThresholdError("Invalid thresholds: must satisfy 0 <= low < medium < critical <= 1.");
+      return;
+    }
+
+    try {
+      const res = await fetch(`${API_BASE}/api/prevention/thresholds`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(payload),
+      });
+      const data = await res.json();
+      if (!res.ok) {
+        setThresholdError(data.error || "Failed to update thresholds.");
+        return;
+      }
+      const updated = data.thresholds || payload;
+      setThresholds({
+        low: Number(updated.low).toFixed(2),
+        medium: Number(updated.medium).toFixed(2),
+        critical: Number(updated.critical).toFixed(2),
+      });
+      setThresholdStatus("Thresholds updated.");
+    } catch (err) {
+      setThresholdError("Cannot update thresholds.");
+      console.error("Threshold update error:", err);
+    }
+  };
+
   useEffect(() => {
     fetchData();
+    fetchThresholds();
     const interval = setInterval(fetchData, 5000);
 
     socket.on("host_update", (host) => {
@@ -47,10 +117,18 @@ export default function Dashboard() {
       fetch(`${API_BASE}/api/dashboard/stats`).then(r => r.json()).then(setStats).catch(() => {});
     });
 
+    socket.on("prevention_action", (event) => {
+      setPreventionEvents(prev => [event, ...prev].slice(0, 20));
+      if (event?.popup) {
+        setPreventionNotice(event.popup);
+      }
+    });
+
     return () => {
       clearInterval(interval);
       socket.off("host_update");
       socket.off("new_alert");
+      socket.off("prevention_action");
     };
   }, []);
 
@@ -67,6 +145,64 @@ export default function Dashboard() {
             </svg>
           </div>
           <h1>Dashboard</h1>
+        </div>
+
+        {preventionNotice && (
+          <div className="prevention-popup" role="alert">
+            <div className="prevention-popup-header">
+              <strong>{preventionNotice.title}</strong>
+              <button
+                className="prevention-popup-close"
+                onClick={() => setPreventionNotice(null)}
+                aria-label="Close prevention alert"
+              >
+                ✕
+              </button>
+            </div>
+            <p>{preventionNotice.message}</p>
+          </div>
+        )}
+
+        <div className="panel">
+          <h3>Prevention Threshold Controls</h3>
+          <div className="threshold-controls">
+            <label>
+              Low
+              <input
+                type="number"
+                min="0"
+                max="1"
+                step="0.01"
+                value={thresholds.low}
+                onChange={(e) => setThresholds(prev => ({ ...prev, low: e.target.value }))}
+              />
+            </label>
+            <label>
+              Medium
+              <input
+                type="number"
+                min="0"
+                max="1"
+                step="0.01"
+                value={thresholds.medium}
+                onChange={(e) => setThresholds(prev => ({ ...prev, medium: e.target.value }))}
+              />
+            </label>
+            <label>
+              Critical
+              <input
+                type="number"
+                min="0"
+                max="1"
+                step="0.01"
+                value={thresholds.critical}
+                onChange={(e) => setThresholds(prev => ({ ...prev, critical: e.target.value }))}
+              />
+            </label>
+            <button className="view-logs-btn" onClick={saveThresholds}>Apply</button>
+          </div>
+          {thresholdError && <p className="error">{thresholdError}</p>}
+          {thresholdStatus && <p className="success-text">{thresholdStatus}</p>}
         </div>
 
         {/* Stats Cards */}
@@ -166,6 +302,62 @@ export default function Dashboard() {
                 </tr>
               )) : (
                 <tr><td colSpan="4" className="empty-logs">No alerts detected. System is secure.</td></tr>
+              )}
+            </tbody>
+          </table>
+        </div>
+
+        <div className="panel">
+          <h3>Recent Prevention Actions</h3>
+          <table>
+            <thead>
+              <tr>
+                <th>Host Name</th>
+                <th>Activity</th>
+                <th>Level</th>
+                <th>Action</th>
+                <th>Probability</th>
+              </tr>
+            </thead>
+            <tbody>
+              {preventionEvents.length > 0 ? preventionEvents.map((event, idx) => (
+                <tr key={idx}>
+                  <td>{event.host_name || "N/A"}</td>
+                  <td>{event.activity_type || "N/A"}</td>
+                  <td>{event.level || "N/A"}</td>
+                  <td>{event.action || "N/A"}</td>
+                  <td>{typeof event.probability === "number" ? `${(event.probability * 100).toFixed(1)}%` : "N/A"}</td>
+                </tr>
+              )) : (
+                <tr><td colSpan="5" className="empty-logs">No prevention actions yet.</td></tr>
+              )}
+            </tbody>
+          </table>
+        </div>
+
+        <div className="panel">
+          <h3>AI Decision Feed (Probability)</h3>
+          <table>
+            <thead>
+              <tr>
+                <th>Time</th>
+                <th>Host</th>
+                <th>Prediction</th>
+                <th>Probability</th>
+                <th>Level</th>
+              </tr>
+            </thead>
+            <tbody>
+              {preventionLogs.length > 0 ? preventionLogs.map((item, idx) => (
+                <tr key={idx}>
+                  <td>{item.time ? new Date(item.time).toLocaleTimeString() : "N/A"}</td>
+                  <td>{item.host_name || "N/A"}</td>
+                  <td>{item.prediction || "N/A"}</td>
+                  <td>{typeof item.probability === "number" ? `${(item.probability * 100).toFixed(1)}%` : "N/A"}</td>
+                  <td>{item.level || "NONE"}</td>
+                </tr>
+              )) : (
+                <tr><td colSpan="5" className="empty-logs">No AI decision records yet.</td></tr>
               )}
             </tbody>
           </table>
