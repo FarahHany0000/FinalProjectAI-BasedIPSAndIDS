@@ -61,6 +61,29 @@ class InsiderThreatResponseOrchestrator:
         print(f"[PREVENTION] initialize_and_reset() complete | TEST_MODE={cls._test_mode}")
 
     @classmethod
+    def update_thresholds(cls, *, low: float, medium: float, critical: float) -> Dict[str, float]:
+        if not (0 <= low < medium < critical <= 1):
+            raise ValueError("Thresholds must satisfy 0 <= low < medium < critical <= 1.")
+
+        cls._thresholds = (float(low), float(medium), float(critical))
+        cls._write_log(
+            {
+                "event": "threshold_update",
+                "thresholds": cls.get_thresholds(),
+            }
+        )
+        return cls.get_thresholds()
+
+    @classmethod
+    def get_thresholds(cls) -> Dict[str, float]:
+        low, medium, critical = cls._thresholds
+        return {
+            "low": low,
+            "medium": medium,
+            "critical": critical,
+        }
+
+    @classmethod
     def evaluate_and_respond(
         cls,
         *,
@@ -168,6 +191,7 @@ class InsiderThreatResponseOrchestrator:
         return {
             "initialized": cls._initialized,
             "test_mode": cls._test_mode,
+            "thresholds": cls.get_thresholds(),
             "active_constraints": cls._active_constraints,
             "log_path": cls._log_path,
         }

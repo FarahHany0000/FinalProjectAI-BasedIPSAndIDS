@@ -109,6 +109,7 @@ def create_app():
                 "agents": "/api/agents",
                 "prevention_status": "/api/prevention/status",
                 "prevention_logs": "/api/prevention/logs",
+                "prevention_thresholds": "/api/prevention/thresholds [GET|POST]",
             },
         })
 

@@ -92,6 +92,7 @@ class HostController:
                 "ip": ip,
                 "prediction": threat,
                 "probability": probability,
+                "risk_score": round(probability * 100, 1),
                 **prevention_result,
             })
 
