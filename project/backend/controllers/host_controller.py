@@ -64,6 +64,25 @@ class HostController:
 
         host = Host.query.filter_by(agent_id=agent_id).first()
         if not host:
+            # Fallback: same physical host may come with a regenerated agent_id.
+            if ip:
+                host = (
+                    Host.query
+                    .filter_by(host_name=host_name, ip=ip)
+                    .order_by(Host.last_seen.desc())
+                    .first()
+                )
+            if not host:
+                host = (
+                    Host.query
+                    .filter_by(host_name=host_name)
+                    .order_by(Host.last_seen.desc())
+                    .first()
+                )
+            if host:
+                host.agent_id = agent_id
+
+        if not host:
             host = Host(agent_id=agent_id, host_name=host_name, ip=ip, last_seen=now, status="Online", action=action)
             db.session.add(host)
         else:
@@ -106,5 +125,10 @@ class HostController:
     @staticmethod
     def get_all_hosts():
         """Return all registered hosts."""
-        hosts = Host.query.all()
-        return [h.to_dict() for h in hosts]
+        hosts = Host.query.order_by(Host.last_seen.desc()).all()
+        dedup = {}
+        for host in hosts:
+            key = f"{(host.host_name or '').strip().lower()}|{host.ip or ''}"
+            if key not in dedup:
+                dedup[key] = host
+        return [h.to_dict() for h in dedup.values()]
