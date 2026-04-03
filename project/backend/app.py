@@ -78,6 +78,31 @@ def _merge_duplicate_agents():
         print(f"[CLEANUP] Removed {len(duplicates)} duplicate registered agent row(s).")
 
 
+def _merge_duplicate_hosts():
+    """
+    Merge duplicate host rows for the same physical machine.
+    Keeps the newest row per (host_name, ip) and removes stale duplicates.
+    """
+    from models.host import Host
+
+    hosts = Host.query.order_by(Host.last_seen.desc()).all()
+    dedup = {}
+    duplicates = []
+
+    for host in hosts:
+        key = f"{(host.host_name or '').strip().lower()}|{host.ip or ''}"
+        if key not in dedup:
+            dedup[key] = host
+        else:
+            duplicates.append(host)
+
+    if duplicates:
+        for row in duplicates:
+            db.session.delete(row)
+        db.session.commit()
+        print(f"[CLEANUP] Removed {len(duplicates)} duplicate host row(s).")
+
+
 def create_app():
     """Application factory — creates and configures the Flask app."""
     app = Flask(__name__)
@@ -144,6 +169,7 @@ def create_app():
         os.makedirs(os.path.join(BASE_DIR, "instance"), exist_ok=True)
         db.create_all()
         _merge_duplicate_agents()
+        _merge_duplicate_hosts()
         ModelLoader.load()
         InsiderThreatResponseOrchestrator.initialize_and_reset(app.config)
 
