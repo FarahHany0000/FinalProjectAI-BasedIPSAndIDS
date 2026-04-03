@@ -135,8 +135,8 @@ NN_PARAMS = dict(
 )
 
 # ── Live Capture (default interface for Windows + Kali testing) ──────────────
-# Change this to match your network interface
-DEFAULT_IFACE = "Realtek PCIe 2.5GbE Family Controller"
+# Updated: VMware Network Adapter VMnet1 (Host-Only Network)
+DEFAULT_IFACE = "Ethernet 2"
 
 # ── Streamlit ────────────────────────────────────────────────────────────────
 STREAMLIT_PORT = 8501

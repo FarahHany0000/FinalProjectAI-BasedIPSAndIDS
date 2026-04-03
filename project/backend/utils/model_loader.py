@@ -74,13 +74,13 @@ class ModelLoader:
             attack_model_path = os.path.join(NETWORK_MODELS_DIR, "attack_model.json")
 
             if not os.path.exists(binary_model_path) or not os.path.exists(attack_model_path):
-                print(f"[WARN] Network models not found:")
-                print(f"       Binary: {binary_model_path}")
-                print(f"       Attack: {attack_model_path}")
-                print(f"       Disabling network sensor")
+                print(f"[WARN] Network models not found at:")
+                print(f"       Binary:  {binary_model_path}")
+                print(f"       Attack:  {attack_model_path}")
+                print(f"       Network sensor will be DISABLED")
                 return None
 
-            # Import and create engine
+            # Import XGBoost
             try:
                 import xgboost as xgb
             except ImportError:
@@ -159,12 +159,14 @@ class ModelLoader:
                     return labels, confidences
 
             engine = NetworkXGBoostEngine(binary_model_path, attack_model_path)
-            print("[OK] Network XGBoost models loaded")
+            print("[OK] Network XGBoost models loaded (binary + attack)")
             cls._network_engine = engine
             return engine
 
         except Exception as e:
             print(f"[WARN] Failed to load network models: {e}")
+            import traceback
+            traceback.print_exc()
             return None
 
     @classmethod
