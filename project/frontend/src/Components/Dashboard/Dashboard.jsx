@@ -165,7 +165,7 @@ export default function Dashboard() {
 
   return (
     <div className="dashboard-container">
-      <Sidebar />
+      <Sidebar dashboardMode activeTab={activeTab} onTabChange={setActiveTab} />
       <div className="dashboard-content">
 
         <div className="icondesign">
@@ -194,25 +194,10 @@ export default function Dashboard() {
           </div>
         )}
 
-        <div className="tab-bar">
-          <button
-            className={`tab-btn ${activeTab === "overview" ? "active" : ""}`}
-            onClick={() => setActiveTab("overview")}
-          >
-            Overview
-          </button>
-          <button
-            className={`tab-btn ${activeTab === "prevention" ? "active" : ""}`}
-            onClick={() => setActiveTab("prevention")}
-          >
-            Prevention Settings
-          </button>
-          <button
-            className={`tab-btn ${activeTab === "ai" ? "active" : ""}`}
-            onClick={() => setActiveTab("ai")}
-          >
-            AI Decisions
-          </button>
+        <div className="dashboard-current-view">
+          {activeTab === "overview" && <span>Current View: Overview</span>}
+          {activeTab === "prevention" && <span>Current View: Prevention Settings</span>}
+          {activeTab === "ai" && <span>Current View: AI Decisions</span>}
         </div>
 
         {activeTab === "overview" && (
