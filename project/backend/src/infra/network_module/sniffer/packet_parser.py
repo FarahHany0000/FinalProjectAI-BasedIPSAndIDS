@@ -117,6 +117,9 @@ def parse_scapy_packet(pkt) -> dict:
     # ARP layer
     elif pkt.haslayer(ARP):
         proto_name = "ARP"
+        arp = pkt[ARP]
+        features["_src_ip"] = arp.psrc if arp.psrc else ""
+        features["_dst_ip"] = arp.pdst if arp.pdst else ""
 
     # Protocol encoding
     features["protocol_encoded"] = float(PROTOCOL_MAP.get(proto_name, 0))

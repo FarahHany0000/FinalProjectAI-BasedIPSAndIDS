@@ -171,8 +171,8 @@ class InsiderThreatResponseOrchestrator:
                 "activity_type": normalized_activity,
                 "prediction": prediction,
                 "probability": probability,
-                "level": level,
-                "action": action,
+                "decision_level": level,
+                "action_taken": action,
                 "test_mode": cls._test_mode,
                 "firewall_applied": firewall_applied,
                 "response_message": response_message,
@@ -194,6 +194,26 @@ class InsiderThreatResponseOrchestrator:
     @classmethod
     def _apply_host_firewall_block(cls, ip: str, host_name: str, level: str) -> bool:
         """Block a host's IP via Windows Firewall (in+out). Returns True if successful."""
+        # Skip loopback/localhost — firewall can't block loopback traffic
+        if ip.startswith("127.") or ip == "::1" or ip == "localhost":
+            print(f"[HOST PREVENTION] Skipping localhost IP {ip} — firewall cannot block loopback")
+            cls._write_log({
+                "event": "firewall_block_skipped",
+                "host_name": host_name,
+                "host_ip": ip,
+                "reason": "Loopback IP — Windows Firewall does not filter localhost traffic. "
+                          "In production, the agent runs on a remote machine with a real IP.",
+            })
+            # Still track as "blocked" in memory for status display
+            cls._blocked_hosts[ip] = {
+                "host_name": host_name,
+                "rule_name": f"SKIPPED_LOCALHOST_{ip}",
+                "level": level,
+                "blocked_at": datetime.datetime.utcnow().isoformat(),
+                "note": "Loopback — would be blocked on remote host",
+            }
+            return True
+
         rule_in = f"{cls.RULE_PREFIX}_{ip.replace('.', '_')}_IN"
         rule_out = f"{cls.RULE_PREFIX}_{ip.replace('.', '_')}_OUT"
         try:
@@ -209,7 +229,19 @@ class InsiderThreatResponseOrchestrator:
                  f"remoteip={ip}", "protocol=any", "enable=yes"],
                 capture_output=True, text=True, timeout=10
             )
+            err1 = (r1.stderr or r1.stdout or "").strip()
+            err2 = (r2.stderr or r2.stdout or "").strip()
             success = r1.returncode == 0 or r2.returncode == 0
+
+            if not success and ("elevation" in err1.lower() or "elevation" in err2.lower()):
+                print(f"[HOST PREVENTION] ⚠ Need Administrator! Run backend as admin for firewall.")
+                cls._write_log({
+                    "event": "firewall_needs_admin",
+                    "host_ip": ip,
+                    "error": "Backend must run as Administrator for netsh firewall commands",
+                })
+                return False
+
             if success:
                 cls._blocked_hosts[ip] = {
                     "host_name": host_name,
@@ -228,11 +260,11 @@ class InsiderThreatResponseOrchestrator:
                     "proof": f"Verify: netsh advfirewall firewall show rule name={rule_in}",
                 })
             else:
-                print(f"[HOST PREVENTION] Failed to block {ip}: {r1.stderr} {r2.stderr}")
+                print(f"[HOST PREVENTION] Failed to block {ip}: {err1} {err2}")
                 cls._write_log({
                     "event": "firewall_block_failed",
                     "host_ip": ip,
-                    "error": f"{r1.stderr} {r2.stderr}",
+                    "error": f"{err1} {err2}",
                 })
             return success
         except Exception as e:
@@ -346,6 +378,13 @@ class InsiderThreatResponseOrchestrator:
 
     @classmethod
     def get_status(cls) -> Dict[str, Any]:
+        total_actions = 0
+        if cls._log_path:
+            try:
+                with open(cls._log_path, "r", encoding="utf-8") as f:
+                    total_actions = sum(1 for line in f if line.strip())
+            except FileNotFoundError:
+                pass
         return {
             "initialized": cls._initialized,
             "test_mode": cls._test_mode,
@@ -353,6 +392,8 @@ class InsiderThreatResponseOrchestrator:
             "active_constraints": cls._active_constraints,
             "blocked_hosts": cls._blocked_hosts,
             "log_path": cls._log_path,
+            "total_actions": total_actions,
+            "active_blocks": len(cls._blocked_hosts),
         }
 
     @classmethod
@@ -413,6 +454,6 @@ class InsiderThreatResponseOrchestrator:
         if not cls._log_path:
             return
 
-        record = {"time": datetime.datetime.utcnow().isoformat(), **payload}
+        record = {"timestamp": datetime.datetime.utcnow().isoformat(), **payload}
         with open(cls._log_path, "a", encoding="utf-8") as f:
             f.write(json.dumps(record, ensure_ascii=False) + "\n")

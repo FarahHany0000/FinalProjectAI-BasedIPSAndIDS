@@ -394,24 +394,32 @@ def get_archive(filename):
 def _apply_firewall_block(ip: str):
     """Add Windows Firewall rules to fully block an IP (inbound + outbound)."""
     import subprocess
+    if ip.startswith("127.") or ip == "::1" or ip == "localhost":
+        print(f"[PREVENTION] Skipping localhost IP {ip}")
+        return
     rule_name_in = f"IDS_BLOCK_{ip.replace('.', '_')}_IN"
     rule_name_out = f"IDS_BLOCK_{ip.replace('.', '_')}_OUT"
     try:
-        # Block inbound traffic from this IP
-        subprocess.run(
+        r1 = subprocess.run(
             ["netsh", "advfirewall", "firewall", "add", "rule",
              f"name={rule_name_in}", "dir=in", "action=block",
              f"remoteip={ip}", "protocol=any", "enable=yes"],
             capture_output=True, text=True, timeout=10
         )
-        # Block outbound traffic to this IP
-        subprocess.run(
+        r2 = subprocess.run(
             ["netsh", "advfirewall", "firewall", "add", "rule",
              f"name={rule_name_out}", "dir=out", "action=block",
              f"remoteip={ip}", "protocol=any", "enable=yes"],
             capture_output=True, text=True, timeout=10
         )
-        print(f"[PREVENTION] Blocked IP: {ip} (in+out)")
+        if r1.returncode == 0 or r2.returncode == 0:
+            print(f"[PREVENTION] Blocked IP: {ip} (in+out)")
+        else:
+            err = (r1.stderr or r1.stdout or "").strip()
+            if "elevation" in err.lower():
+                print(f"[PREVENTION] ⚠ Need Administrator for firewall!")
+            else:
+                print(f"[PREVENTION] Failed to block {ip}: {err}")
     except Exception as e:
         print(f"[PREVENTION] Failed to block {ip}: {e}")
 
