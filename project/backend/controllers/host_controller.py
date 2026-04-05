@@ -102,10 +102,7 @@ class HostController:
 
         if threat != "Normal":
             detail_parts = []
-            detail_parts.append(f"Threat probability: {probability*100:.1f}%")
             detail_parts.append(f"Action: {action}")
-            if prevention_result.get("level") and prevention_result["level"] != "NONE":
-                detail_parts.append(f"Prevention: {prevention_result['level']}")
             # Add top anomalous features
             anomaly_features = []
             for i, name in enumerate(FEATURE_NAMES):
