@@ -101,12 +101,38 @@ class HostController:
                 host.os_info = os_info
 
         if threat != "Normal":
+            detail_parts = []
+            detail_parts.append(f"Threat probability: {probability*100:.1f}%")
+            detail_parts.append(f"Action: {action}")
+            if prevention_result.get("level") and prevention_result["level"] != "NONE":
+                detail_parts.append(f"Prevention: {prevention_result['level']}")
+            # Add top anomalous features
+            anomaly_features = []
+            for i, name in enumerate(FEATURE_NAMES):
+                if i < len(features):
+                    val = features[i]
+                    if name == "failed_logins" and val > 0:
+                        anomaly_features.append(f"Failed Logins: {val}")
+                    elif name == "privilege_escalation_attempts" and val > 0:
+                        anomaly_features.append(f"Privilege Escalations: {val}")
+                    elif name == "unusual_process_count" and val > 0:
+                        anomaly_features.append(f"Unusual Processes: {val}")
+                    elif name == "file_access_anomaly_score" and val > 0.5:
+                        anomaly_features.append(f"File Anomaly: {val:.2f}")
+                    elif name == "cpu_percent" and val > 90:
+                        anomaly_features.append(f"High CPU: {val:.1f}%")
+                    elif name == "num_connections" and val > 500:
+                        anomaly_features.append(f"Connections: {int(val)}")
+            if anomaly_features:
+                detail_parts.append("Anomalies: " + ", ".join(anomaly_features[:3]))
+
             alert = Alert(
                 host_name=host_name, ip=ip,
                 threat_type=threat,
                 action=action, time=now,
                 confidence=probability,
                 severity="Critical" if probability >= 0.9 else ("High" if probability >= 0.7 else "Medium"),
+                details=" | ".join(detail_parts),
             )
             db.session.add(alert)
 
