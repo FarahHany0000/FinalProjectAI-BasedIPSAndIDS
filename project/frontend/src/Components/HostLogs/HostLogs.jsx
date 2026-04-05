@@ -288,31 +288,25 @@ export default function HostLogs() {
                   <th>Time</th>
                   <th>Prediction</th>
                   <th>Probability</th>
-                  <th>Severity</th>
                   <th>Details</th>
                 </tr>
               </thead>
               <tbody>
                 {alerts.length > 0 ? alerts.slice(0, 50).map((alert, i) => (
                   <tr key={i}>
-                    <td>{alert.timestamp ? new Date(alert.timestamp).toLocaleString() : "N/A"}</td>
+                    <td>{alert.time ? new Date(alert.time).toLocaleString() : "N/A"}</td>
                     <td>
-                      <span className={`status-badge ${alert.prediction === "Malicious" ? "malicious" : "benign"}`}>
-                        {alert.prediction || "N/A"}
+                      <span className={`status-badge ${alert.threat && alert.threat !== "Normal" && alert.threat !== "Benign" ? "malicious" : "benign"}`}>
+                        {alert.threat || "Normal"}
                       </span>
                     </td>
-                    <td>{alert.probability != null ? (alert.probability * 100).toFixed(1) + "%" : "N/A"}</td>
-                    <td>
-                      <span className={`severity-badge ${(alert.severity || "").toLowerCase()}`}>
-                        {alert.severity || "N/A"}
-                      </span>
-                    </td>
+                    <td>{alert.confidence != null ? (alert.confidence * 100).toFixed(1) + "%" : "N/A"}</td>
                     <td style={{ maxWidth: "300px", overflow: "hidden", textOverflow: "ellipsis" }}>
                       {alert.details || "—"}
                     </td>
                   </tr>
                 )) : (
-                  <tr><td colSpan="5" className="empty-logs">No alerts for this host</td></tr>
+                  <tr><td colSpan="4" className="empty-logs">No alerts for this host</td></tr>
                 )}
               </tbody>
             </table>

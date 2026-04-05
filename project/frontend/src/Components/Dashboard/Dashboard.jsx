@@ -51,8 +51,8 @@ export default function Dashboard() {
   const onlineHosts = hosts.filter(h => isOnline(h.last_seen));
   const offlineHosts = hosts.filter(h => !isOnline(h.last_seen));
   const totalAlerts = stats?.total_alerts || 0;
-  const hostAlerts = alerts.filter(a => a.source === "host" || a.host_name).length;
-  const networkAlerts = alerts.filter(a => a.source === "network" || a.src_ip).length;
+  const hostAlerts = alerts.filter(a => a.source_type === "host").length;
+  const networkAlerts = alerts.filter(a => a.source_type === "network").length;
 
   return (
     <div className="dashboard">
