@@ -2,7 +2,7 @@ import datetime
 from extensions import db, socketio
 from models.host import Host
 from models.alert import Alert
-from utils.model_loader import ModelLoader
+from src.infra import ModelLoader
 from utils.constants import EXPECTED_FEATURE_COUNT
 
 

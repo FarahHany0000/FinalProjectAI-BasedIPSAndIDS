@@ -16,9 +16,8 @@ import requests
 # Add project paths
 sys.path.insert(0, str(pathlib.Path(__file__).resolve().parent.parent.parent))
 
-from network_module.sniffer.live_capture import LiveSniffer
-from network_module.sniffer.pcap_replay import PcapPlayer
-from network_module.config.settings import DEFAULT_IFACE, CONFIDENCE_THRESHOLD
+from backend.src.infra.network_module.sniffer.live_capture import LiveSniffer
+from backend.src.infra.network_module.config.settings import DEFAULT_IFACE, CONFIDENCE_THRESHOLD
 
 logger = logging.getLogger(__name__)
 
@@ -34,7 +33,8 @@ class NetworkSensorAgent:
     """
 
     def __init__(self, model_engine, iface: str = None, hostname: str = HOSTNAME,
-                 backend_url: str = BACKEND_URL, agent_key: str = AGENT_KEY):
+                 backend_url: str = BACKEND_URL, agent_key: str = AGENT_KEY,
+                 bpf_filter: str = None):
         """
         Parameters
         ----------
@@ -43,12 +43,14 @@ class NetworkSensorAgent:
         hostname : identifier for this sensor
         backend_url : backend API endpoint for alerts
         agent_key : authentication key for backend
+        bpf_filter : optional BPF filter string for Scapy sniff
         """
         self.model_engine = model_engine
         self.sniffer = LiveSniffer(
             engine=model_engine,
             iface=iface or DEFAULT_IFACE,
-            threshold=CONFIDENCE_THRESHOLD
+            threshold=CONFIDENCE_THRESHOLD,
+            bpf_filter=bpf_filter,
         )
         self.hostname = hostname
         self.backend_url = backend_url
@@ -62,7 +64,7 @@ class NetworkSensorAgent:
             self.running = True
             self.sniffer.start()
             print(f"[{self.hostname}] Network sensor started on interface: {self.sniffer.iface}")
-            print(f"[{self.hostname}] → Sending alerts to: {self.backend_url}")
+            print(f"[{self.hostname}] -> Sending alerts to: {self.backend_url}")
 
     def stop(self):
         """Stop packet capture."""
@@ -111,6 +113,10 @@ class NetworkSensorAgent:
                 "confidence": float(alert.get("confidence", 0)),
                 "n_packets": int(alert.get("n_packets", 0)),
                 "window_id": int(alert.get("window_id", 0)),
+                "src_ip": alert.get("src_ip", ""),
+                "dst_ip": alert.get("dst_ip", ""),
+                "src_port": int(alert.get("src_port", 0)),
+                "dst_port": int(alert.get("dst_port", 0)),
             }
 
             headers = {
@@ -170,39 +176,10 @@ class NetworkSensorAgent:
             self.stop()
 
 
-def test_with_pcap(pcap_file: str, model_engine):
-    """
-    Test attack detection on a saved PCAP file.
-
-    Parameters
-    ----------
-    pcap_file : path to .pcap file
-    model_engine : loaded model
-    """
-    player = PcapPlayer(engine=model_engine, threshold=CONFIDENCE_THRESHOLD)
-    results = player.process_pcap(pcap_file, realtime_pace=False)
-
-    # Summarize results
-    print(f"\n[PCAP Analysis] {pcap_file}")
-    print(f"  Total windows: {len(results)}")
-    print(f"  Attacks detected: {sum(1 for r in results if r['alert'])}")
-
-    # Show top detections
-    attacks = [r for r in results if r["alert"]]
-    if attacks:
-        print(f"\n  Top attacks:")
-        for r in sorted(attacks, key=lambda x: x["confidence"], reverse=True)[:10]:
-            print(f"    {r['label']:15} conf={r['confidence']:.3f}  win#{r['window_id']}")
-
-    return results
-
-
 if __name__ == "__main__":
     print("Network Sensor Agent Module")
     print("  Use: from agents.network_sensor.network_sensor import NetworkSensorAgent")
     print("  Example:")
-    print("    from backend.utils.model_loader import load_network_model")
-    print("    engine = load_network_model()")
     print("    agent = NetworkSensorAgent(engine)")
     print("    agent.run_loop()  # Runs until Ctrl+C")
 

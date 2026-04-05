@@ -3,7 +3,7 @@ import threading
 import datetime
 from flask import Flask, jsonify
 from extensions import db, cors, socketio
-from utils.model_loader import ModelLoader
+from src.infra import ModelLoader
 
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 
@@ -79,11 +79,15 @@ def _start_network_sensor(app):
                 return
 
             # Initialize and start sensor
+            # BPF filter to exclude noisy non-attack traffic
+            bpf = "not port 53 and not port 1900 and not port 5353 and not port 57621 and not port 137 and not port 138 and not port 5000 and not port 67 and not port 68 and not port 5355 and not port 547 and not host 192.168.253.254 and not dst net 224.0.0.0/4"
+
             _network_agent = NetworkSensorAgent(
                 model_engine=net_model,
                 hostname="NetworkSensor-1",
                 backend_url="http://127.0.0.1:5000/api/agent/network-alert",
                 agent_key=app.config.get("AGENT_KEY", "changeme"),
+                bpf_filter=bpf,
             )
             _network_agent.run_loop()
 
@@ -93,6 +97,36 @@ def _start_network_sensor(app):
     sensor_daemon = threading.Thread(target=_sensor_thread, daemon=True, name="NetworkSensor")
     sensor_daemon.start()
     print("[OK] Network sensor thread started (running in background)")
+
+
+def _migrate_db(app):
+    """Add missing columns to existing SQLite tables."""
+    import sqlite3
+    db_path = app.config["SQLALCHEMY_DATABASE_URI"].replace("sqlite:///", "")
+    if not os.path.exists(db_path):
+        return
+    try:
+        conn = sqlite3.connect(db_path)
+        cursor = conn.cursor()
+        cursor.execute("PRAGMA table_info(alerts)")
+        existing_cols = {row[1] for row in cursor.fetchall()}
+
+        new_cols = {
+            "is_blocked": "BOOLEAN DEFAULT 0",
+            "src_ip": "VARCHAR(50) DEFAULT ''",
+            "dst_ip": "VARCHAR(50) DEFAULT ''",
+            "src_port": "INTEGER DEFAULT 0",
+            "dst_port": "INTEGER DEFAULT 0",
+        }
+        for col_name, col_type in new_cols.items():
+            if col_name not in existing_cols:
+                cursor.execute(f"ALTER TABLE alerts ADD COLUMN {col_name} {col_type}")
+                print(f"[MIGRATE] Added column alerts.{col_name}")
+
+        conn.commit()
+        conn.close()
+    except Exception as e:
+        print(f"[MIGRATE] Warning: {e}")
 
 
 def create_app():
@@ -117,10 +151,12 @@ def create_app():
     from routes.health import health_bp
     from routes.agent import agent_bp
     from routes.dashboard import dashboard_bp
+    from src.api import api_bp
 
     app.register_blueprint(health_bp)
     app.register_blueprint(agent_bp)
     app.register_blueprint(dashboard_bp)
+    app.register_blueprint(api_bp)
 
     # ── Root page — quick status overview ──
     @app.route("/")
@@ -152,6 +188,10 @@ def create_app():
         from models import Host, Alert, RegisteredAgent  # noqa: F401
         os.makedirs(os.path.join(BASE_DIR, "instance"), exist_ok=True)
         db.create_all()
+
+        # Migrate: add new columns if they don't exist (SQLite ALTER TABLE)
+        _migrate_db(app)
+
         ModelLoader.load()
 
     # ── Start heartbeat monitor thread ──
@@ -171,12 +211,12 @@ if __name__ == "__main__":
 
     agent_key = app.config["AGENT_KEY"]
     print("=" * 60)
-    print("  🔒 AI-Based IDS/IPS Backend Server")
-    print(f"  📊 Model loaded:           {ModelLoader.is_loaded()}")
-    print(f"  🌐 Network sensor:         {'ENABLED' if ENABLE_NETWORK_SENSOR else 'DISABLED'}")
-    print(f"  🔑 Agent key:              {'(default)' if agent_key == 'changeme' else '(configured)'}")
-    print(f"  ❤️  Heartbeat timeout:      {HEARTBEAT_TIMEOUT}s")
-    print(f"  📡 Listening on:           0.0.0.0:5000")
+    print("  AI-Based IDS/IPS Backend Server")
+    print(f"  Model loaded:           {ModelLoader.is_loaded()}")
+    print(f"  Network sensor:         {'ENABLED' if ENABLE_NETWORK_SENSOR else 'DISABLED'}")
+    print(f"  Agent key:              {'(default)' if agent_key == 'changeme' else '(configured)'}")
+    print(f"  Heartbeat timeout:      {HEARTBEAT_TIMEOUT}s")
+    print(f"  Listening on:           0.0.0.0:5000")
     print("=" * 60)
 
     socketio.run(app, host="0.0.0.0", port=5000, allow_unsafe_werkzeug=True)

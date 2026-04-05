@@ -1,6 +1,6 @@
 import datetime
 from flask import Blueprint, jsonify
-from utils.model_loader import ModelLoader
+from src.infra import ModelLoader
 
 health_bp = Blueprint("health", __name__)
 

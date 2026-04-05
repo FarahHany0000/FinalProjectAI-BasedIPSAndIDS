@@ -36,7 +36,7 @@ class AlertController:
         registered_agents = RegisteredAgent.query.count()
         online_agents = RegisteredAgent.query.filter_by(status="Online").count()
 
-        from utils.model_loader import ModelLoader
+        from src.infra import ModelLoader
 
         # Check if network sensor is enabled
         network_sensor_enabled = os.environ.get("ENABLE_NETWORK_SENSOR", "true").lower() == "true"

@@ -12,9 +12,14 @@ class Alert(db.Model):
     threat_type = db.Column(db.String(100))
     severity = db.Column(db.String(20), default="Medium")
     action = db.Column(db.String(100), default="Alert")
-    confidence = db.Column(db.Float, default=0.0)  # For network: model confidence
-    details = db.Column(db.String(500))  # Additional info (ports, packet count, etc.)
+    confidence = db.Column(db.Float, default=0.0)
+    details = db.Column(db.String(500))
     time = db.Column(db.DateTime, default=datetime.utcnow)
+    is_blocked = db.Column(db.Boolean, default=False)
+    src_ip = db.Column(db.String(50), default="")
+    dst_ip = db.Column(db.String(50), default="")
+    src_port = db.Column(db.Integer, default=0)
+    dst_port = db.Column(db.Integer, default=0)
 
     def to_dict(self):
         return {
@@ -28,4 +33,9 @@ class Alert(db.Model):
             "confidence": self.confidence,
             "details": self.details,
             "time": self.time.isoformat() if self.time else None,
+            "is_blocked": self.is_blocked,
+            "src_ip": self.src_ip or "",
+            "dst_ip": self.dst_ip or "",
+            "src_port": self.src_port or 0,
+            "dst_port": self.dst_port or 0,
         }
