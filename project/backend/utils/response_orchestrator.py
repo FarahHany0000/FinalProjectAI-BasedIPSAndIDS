@@ -358,22 +358,28 @@ class InsiderThreatResponseOrchestrator:
     # ── Existing methods ──
 
     @classmethod
-    def get_recent_logs(cls, limit: int = 100) -> List[Dict[str, Any]]:
+    def get_recent_logs(cls, limit: int = 100, actions_only: bool = True) -> List[Dict[str, Any]]:
         if not cls._log_path or not os.path.exists(cls._log_path):
             return []
 
         with open(cls._log_path, "r", encoding="utf-8") as f:
-            lines = f.readlines()[-max(limit, 1):]
+            lines = f.readlines()
 
         parsed: List[Dict[str, Any]] = []
-        for line in lines:
+        for line in reversed(lines):
             line = line.strip()
             if not line:
                 continue
             try:
-                parsed.append(json.loads(line))
+                entry = json.loads(line)
+                if actions_only and entry.get("event") == "observe_only":
+                    continue
+                parsed.append(entry)
+                if len(parsed) >= limit:
+                    break
             except json.JSONDecodeError:
                 parsed.append({"raw": line})
+        parsed.reverse()
         return parsed
 
     @classmethod
