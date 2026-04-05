@@ -14,7 +14,7 @@ class Alert(db.Model):
     action = db.Column(db.String(100), default="Alert")
     confidence = db.Column(db.Float, default=0.0)
     details = db.Column(db.String(500))
-    time = db.Column(db.DateTime, default=datetime.utcnow)
+    time = db.Column(db.DateTime, default=datetime.now)
     is_blocked = db.Column(db.Boolean, default=False)
     src_ip = db.Column(db.String(50), default="")
     dst_ip = db.Column(db.String(50), default="")

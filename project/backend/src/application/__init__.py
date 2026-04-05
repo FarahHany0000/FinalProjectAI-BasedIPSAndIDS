@@ -52,7 +52,7 @@ class NetworkDetectionService:
                 ip="0.0.0.0",
                 action="Block" if confidence >= 0.85 else "Alert",
                 details=f"Packets: {payload.get('n_packets', 0)}, Window: {payload.get('window_id', 0)}",
-                time=datetime.utcnow()
+                time=datetime.now()
             )
 
             return alert

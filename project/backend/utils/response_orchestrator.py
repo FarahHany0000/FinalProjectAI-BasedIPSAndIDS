@@ -160,7 +160,7 @@ class InsiderThreatResponseOrchestrator:
                 "level": level,
                 "firewall_applied": firewall_applied,
                 "host_ip": host_ip,
-                "updated_at": datetime.datetime.utcnow().isoformat(),
+                "updated_at": datetime.datetime.now().isoformat(),
             }
 
         cls._write_log(
@@ -209,7 +209,7 @@ class InsiderThreatResponseOrchestrator:
                 "host_name": host_name,
                 "rule_name": f"SKIPPED_LOCALHOST_{ip}",
                 "level": level,
-                "blocked_at": datetime.datetime.utcnow().isoformat(),
+                "blocked_at": datetime.datetime.now().isoformat(),
                 "note": "Loopback — would be blocked on remote host",
             }
             return True
@@ -247,7 +247,7 @@ class InsiderThreatResponseOrchestrator:
                     "host_name": host_name,
                     "rule_name": rule_in,
                     "level": level,
-                    "blocked_at": datetime.datetime.utcnow().isoformat(),
+                    "blocked_at": datetime.datetime.now().isoformat(),
                 }
                 print(f"[HOST PREVENTION] BLOCKED host IP: {ip} ({host_name}) — Level: {level}")
 
@@ -460,6 +460,6 @@ class InsiderThreatResponseOrchestrator:
         if not cls._log_path:
             return
 
-        record = {"timestamp": datetime.datetime.utcnow().isoformat(), **payload}
+        record = {"timestamp": datetime.datetime.now().isoformat(), **payload}
         with open(cls._log_path, "a", encoding="utf-8") as f:
             f.write(json.dumps(record, ensure_ascii=False) + "\n")

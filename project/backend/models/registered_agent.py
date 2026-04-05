@@ -16,8 +16,8 @@ class RegisteredAgent(db.Model):
     host_name = db.Column(db.String(100), nullable=False)
     ip = db.Column(db.String(100))
     os_info = db.Column(db.String(200))
-    registered_at = db.Column(db.DateTime, default=datetime.utcnow)
-    last_seen = db.Column(db.DateTime, default=datetime.utcnow)
+    registered_at = db.Column(db.DateTime, default=datetime.now)
+    last_seen = db.Column(db.DateTime, default=datetime.now)
     is_approved = db.Column(db.Boolean, default=True)
     status = db.Column(db.String(20), default="Online")
 

@@ -18,7 +18,7 @@ class PredictionLog(db.Model):
     features = db.Column(db.Text)  # JSON string of 15 features
     prevention_level = db.Column(db.String(20))  # NONE/LOW/MEDIUM/CRITICAL
     prevention_action = db.Column(db.String(200))
-    time = db.Column(db.DateTime, default=datetime.utcnow, index=True)
+    time = db.Column(db.DateTime, default=datetime.now, index=True)
 
     def to_dict(self):
         return {

@@ -12,7 +12,7 @@ class Host(db.Model):
     os_info = db.Column(db.String(200))
     last_prediction = db.Column(db.String(50), default="Normal")
     last_probability = db.Column(db.Float, default=0.0)
-    last_seen = db.Column(db.DateTime, default=datetime.utcnow)
+    last_seen = db.Column(db.DateTime, default=datetime.now)
     status = db.Column(db.String(20), default="Online")
     action = db.Column(db.String(100))
 

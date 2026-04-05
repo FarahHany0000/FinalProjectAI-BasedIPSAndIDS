@@ -74,7 +74,7 @@ class NetworkAlertController:
                 action=action,
                 confidence=confidence,
                 details=f"Window #{window_id}: {n_packets} packets | {src_ip}:{src_port} -> {dst_ip}:{dst_port}",
-                time=datetime.utcnow(),
+                time=datetime.now(),
                 is_blocked=is_blocked,
                 src_ip=src_ip,
                 dst_ip=dst_ip,

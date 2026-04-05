@@ -48,7 +48,7 @@ class Alert:
         self.ip = ip
         self.action = action
         self.details = details
-        self.time = time or datetime.utcnow()
+        self.time = time or datetime.now()
         self.is_blocked = False
 
     def mark_blocked(self):
