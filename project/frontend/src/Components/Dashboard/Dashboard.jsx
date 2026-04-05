@@ -3,7 +3,7 @@ import { useNavigate } from "react-router-dom";
 import Sidebar from "../Sidebar/Sidebar";
 import API_BASE from "../../config";
 import socket from "../../socket";
-import { LayoutDashboard, Shield, Activity, Monitor } from "lucide-react";
+import { LayoutDashboard, Shield, Monitor } from "lucide-react";
 
 export default function Dashboard() {
   const navigate = useNavigate();
@@ -50,7 +50,6 @@ export default function Dashboard() {
 
   const onlineHosts = hosts.filter(h => isOnline(h.last_seen));
   const totalAlerts = stats?.total_alerts || 0;
-  const modelLoaded = stats?.model_loaded;
 
   return (
     <div className="dashboard">
@@ -64,11 +63,11 @@ export default function Dashboard() {
         <p className="page-description">System overview — real-time monitoring of all connected devices.</p>
 
         {/* Stats Cards */}
-        <div className="stats-grid" style={{ gridTemplateColumns: "repeat(3, 1fr)" }}>
+        <div className="stats-grid" style={{ gridTemplateColumns: "repeat(2, 1fr)" }}>
           <div className="stat-card">
             <h4><Monitor size={16} style={{ marginRight: 6 }} /> Connected Devices</h4>
             <p className="host-online">{onlineHosts.length}</p>
-            <span className="stat-sub">of {hosts.length} total</span>
+            <span className="stat-sub">of {hosts.length} total • {hosts.length - onlineHosts.length} disconnected</span>
           </div>
           <div className="stat-card">
             <h4><Shield size={16} style={{ marginRight: 6 }} /> Threats Detected</h4>
@@ -76,13 +75,6 @@ export default function Dashboard() {
               {totalAlerts}
             </p>
             <span className="stat-sub">{totalAlerts === 0 ? "All clear" : "Review needed"}</span>
-          </div>
-          <div className="stat-card">
-            <h4><Activity size={16} style={{ marginRight: 6 }} /> System Status</h4>
-            <p style={{ color: modelLoaded ? "#22c55e" : "#ef4444", fontSize: "1.1rem" }}>
-              {modelLoaded ? "✓ Protected" : "⚠ Not Ready"}
-            </p>
-            <span className="stat-sub">{modelLoaded ? "AI models active" : "Models not loaded"}</span>
           </div>
         </div>
 
@@ -161,18 +153,6 @@ export default function Dashboard() {
                 )}
               </tbody>
             </table>
-          </div>
-        </div>
-
-        {/* System Info Footer */}
-        <div style={{ display: "flex", gap: "16px" }}>
-          <div className="panel" style={{ flex: 1, display: "flex", alignItems: "center", gap: "10px" }}>
-            <span style={{ fontSize: "1.1rem" }}>{modelLoaded ? "🟢" : "🔴"}</span>
-            <span>AI Model (XGBoost): <strong>{modelLoaded ? "Loaded & Active" : "Not Loaded"}</strong></span>
-          </div>
-          <div className="panel" style={{ flex: 1, display: "flex", alignItems: "center", gap: "10px" }}>
-            <span style={{ fontSize: "1.1rem" }}>{stats?.network_sensor_enabled ? "🟢" : "🔴"}</span>
-            <span>Network Sensor: <strong>{stats?.network_sensor_enabled ? "Monitoring Traffic" : "Disabled"}</strong></span>
           </div>
         </div>
 
