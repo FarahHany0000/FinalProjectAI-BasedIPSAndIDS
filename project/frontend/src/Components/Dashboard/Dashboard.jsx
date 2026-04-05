@@ -3,7 +3,7 @@ import { useNavigate } from "react-router-dom";
 import Sidebar from "../Sidebar/Sidebar";
 import API_BASE from "../../config";
 import socket from "../../socket";
-import { LayoutDashboard, Shield, Monitor } from "lucide-react";
+import { LayoutDashboard, Shield, Monitor, Wifi, WifiOff, AlertTriangle } from "lucide-react";
 
 export default function Dashboard() {
   const navigate = useNavigate();
@@ -49,7 +49,10 @@ export default function Dashboard() {
   };
 
   const onlineHosts = hosts.filter(h => isOnline(h.last_seen));
+  const offlineHosts = hosts.filter(h => !isOnline(h.last_seen));
   const totalAlerts = stats?.total_alerts || 0;
+  const hostAlerts = alerts.filter(a => a.source === "host" || a.host_name).length;
+  const networkAlerts = alerts.filter(a => a.source === "network" || a.src_ip).length;
 
   return (
     <div className="dashboard">
@@ -63,18 +66,26 @@ export default function Dashboard() {
         <p className="page-description">System overview — real-time monitoring of all connected devices.</p>
 
         {/* Stats Cards */}
-        <div className="stats-grid" style={{ gridTemplateColumns: "repeat(2, 1fr)" }}>
+        <div className="stats-grid" style={{ gridTemplateColumns: "repeat(4, 1fr)" }}>
           <div className="stat-card">
-            <h4><Monitor size={16} style={{ marginRight: 6 }} /> Connected Devices</h4>
+            <h4><Wifi size={16} style={{ marginRight: 6 }} /> Connected</h4>
             <p className="host-online">{onlineHosts.length}</p>
-            <span className="stat-sub">of {hosts.length} total • {hosts.length - onlineHosts.length} disconnected</span>
+            <span className="stat-sub">devices online now</span>
           </div>
           <div className="stat-card">
-            <h4><Shield size={16} style={{ marginRight: 6 }} /> Threats Detected</h4>
-            <p style={{ color: totalAlerts > 0 ? "#ef4444" : "#22c55e" }}>
-              {totalAlerts}
-            </p>
-            <span className="stat-sub">{totalAlerts === 0 ? "All clear" : "Review needed"}</span>
+            <h4><WifiOff size={16} style={{ marginRight: 6 }} /> Disconnected</h4>
+            <p className="host-offline">{offlineHosts.length}</p>
+            <span className="stat-sub">devices offline</span>
+          </div>
+          <div className="stat-card">
+            <h4><Shield size={16} style={{ marginRight: 6 }} /> Host Threats</h4>
+            <p style={{ color: hostAlerts > 0 ? "#ef4444" : "#22c55e" }}>{hostAlerts}</p>
+            <span className="stat-sub">from device agents</span>
+          </div>
+          <div className="stat-card">
+            <h4><AlertTriangle size={16} style={{ marginRight: 6 }} /> Network Threats</h4>
+            <p style={{ color: networkAlerts > 0 ? "#ef4444" : "#22c55e" }}>{networkAlerts}</p>
+            <span className="stat-sub">from network traffic</span>
           </div>
         </div>
 
