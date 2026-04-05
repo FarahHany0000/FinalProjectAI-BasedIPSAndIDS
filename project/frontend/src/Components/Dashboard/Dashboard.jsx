@@ -102,7 +102,7 @@ export default function Dashboard() {
   useEffect(() => {
     fetchData();
     fetchThresholds();
-    const interval = setInterval(fetchData, 5000);
+    const interval = setInterval(fetchData, 15000);
 
     // Fetch pending agents count
     fetch(`${API_BASE}/api/agents`)

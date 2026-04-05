@@ -19,7 +19,7 @@ export default function Agents() {
 
   useEffect(() => {
     fetchAgents();
-    const interval = setInterval(fetchAgents, 3000);
+    const interval = setInterval(fetchAgents, 10000);
 
     socket.on("agent_update", (agent) => {
       setAgents(prev => {

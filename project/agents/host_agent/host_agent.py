@@ -579,7 +579,7 @@ def run_agent():
                 "features": features,
             }
 
-            response = session.post(report_url, json=payload, timeout=10)
+            response = session.post(report_url, json=payload, timeout=30)
 
             if response.status_code == 200:
                 res = response.json()

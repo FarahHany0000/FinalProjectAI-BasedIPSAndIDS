@@ -144,7 +144,7 @@ export default function HostLogs() {
 
   useEffect(() => {
     fetchData();
-    const interval = setInterval(fetchData, 5000);
+    const interval = setInterval(fetchData, 15000);
 
     socket.on("host_update", (data) => {
       if (data.host_name === host_name) {
