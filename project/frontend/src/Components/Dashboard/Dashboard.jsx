@@ -1,6 +1,7 @@
 import React, { useMemo, useState, useEffect } from "react";
 import Sidebar from "../Sidebar/Sidebar";
 import { useNavigate, useLocation } from "react-router-dom";
+import { Clock } from "lucide-react";
 import API_BASE from "../../config";
 import socket from "../../socket";
 
@@ -17,6 +18,8 @@ export default function Dashboard() {
   const [thresholdStatus, setThresholdStatus] = useState("");
   const [thresholdError, setThresholdError] = useState("");
   const [activeTab, setActiveTab] = useState("overview");
+  const [pendingCount, setPendingCount] = useState(0);
+  const [alertTrends, setAlertTrends] = useState({ hourly: [], severity: {} });
 
   const fetchData = async () => {
     try {
@@ -100,6 +103,18 @@ export default function Dashboard() {
     fetchData();
     fetchThresholds();
     const interval = setInterval(fetchData, 5000);
+
+    // Fetch pending agents count
+    fetch(`${API_BASE}/api/agents`)
+      .then(r => r.json())
+      .then(data => setPendingCount(data.filter(a => !a.is_approved).length))
+      .catch(() => {});
+
+    // Fetch alert trends
+    fetch(`${API_BASE}/api/alerts/trends?hours=24`)
+      .then(r => r.json())
+      .then(data => setAlertTrends(data))
+      .catch(() => {});
 
     socket.on("host_update", (host) => {
       setHosts(prev => {
@@ -276,6 +291,18 @@ export default function Dashboard() {
                 <p className="host-online">{stats?.online_agents ?? 0}</p>
               </div>
             </div>
+
+            {pendingCount > 0 && (
+              <div className="pending-banner" style={{ marginBottom: "20px" }}>
+                <div className="pending-banner-header">
+                  <Clock size={20} />
+                  <strong>{pendingCount} device{pendingCount > 1 ? "s" : ""} awaiting approval</strong>
+                  <a href="/agents" style={{ marginLeft: "auto", color: "#3b82f6", textDecoration: "underline" }}>
+                    Review →
+                  </a>
+                </div>
+              </div>
+            )}
 
             <div className="panel">
               <h3>Hosts Overview</h3>
@@ -472,54 +499,6 @@ export default function Dashboard() {
             </table>
           </div>
         )}
-
-        {/* Recent Alerts Table */}
-        <div className="panel">
-          <h3>Recent Alerts</h3>
-          <table>
-            <thead>
-              <tr>
-                <th>Host Name</th>
-                <th>Threat</th>
-                <th>Action Taken</th>
-                <th>Time</th>
-              </tr>
-            </thead>
-            <tbody>
-              {alerts.length > 0 ? alerts.slice(0, 10).map((alert, idx) => (
-                <tr key={idx}>
-                  <td>{alert.host_name}</td>
-                  <td style={{ color: "#ef4444", fontWeight: "bold" }}>{alert.threat}</td>
-                  <td style={{ color: "#f97316", fontWeight: "bold" }}>{alert.action}</td>
-                  <td>{alert.time ? new Date(alert.time).toLocaleString() : "N/A"}</td>
-                </tr>
-              )) : (
-                <tr><td colSpan="4" className="empty-logs">No alerts detected. System is secure.</td></tr>
-              )}
-            </tbody>
-          </table>
-        </div>
-
-        {/* Model & Network Sensor Status */}
-        <div style={{ display: "flex", gap: "20px", marginBottom: "20px" }}>
-          <div className="panel" style={{ flex: 1, display: "flex", alignItems: "center", gap: "12px" }}>
-            <span style={{ fontSize: "1.2rem" }}>
-              {stats?.model_loaded ? "🟢" : "🔴"}
-            </span>
-            <span>
-              AI Model: <strong>{stats?.model_loaded ? "XGBoost — Loaded & Active" : "Not Loaded"}</strong>
-            </span>
-          </div>
-
-          <div className="panel" style={{ flex: 1, display: "flex", alignItems: "center", gap: "12px" }}>
-            <span style={{ fontSize: "1.2rem" }}>
-              {stats?.network_sensor_enabled ? "🟢" : "🔴"}
-            </span>
-            <span>
-              Network IDS (XGBoost): <strong>{stats?.network_sensor_enabled ? "Active — Monitoring traffic on VMnet1" : "Disabled"}</strong>
-            </span>
-          </div>
-        </div>
 
       </div>
     </div>

@@ -300,11 +300,12 @@ def create_app():
         from models.prediction_log import PredictionLog  # noqa: F401
         os.makedirs(os.path.join(BASE_DIR, "instance"), exist_ok=True)
         db.create_all()
+
+        # Migrate FIRST: add new columns before any queries that use them
+        _migrate_db(app)
+
         _merge_duplicate_agents()
         _merge_duplicate_hosts()
-
-        # Migrate: add new columns if they don't exist (SQLite ALTER TABLE)
-        _migrate_db(app)
 
 
         ModelLoader.load()

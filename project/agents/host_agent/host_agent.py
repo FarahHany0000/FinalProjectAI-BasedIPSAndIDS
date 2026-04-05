@@ -25,6 +25,9 @@ import socket
 import platform
 import argparse
 import configparser
+import hashlib
+import hmac
+import json
 import psutil
 from datetime import datetime
 
@@ -96,6 +99,18 @@ def load_config():
     if args.window:
         config["window"] = str(args.window)
 
+    # Auto-discovery: if server_host is "AUTO" or default, try UDP broadcast
+    if config["server_host"] in ("AUTO", "auto", "0.0.0.0"):
+        discovered_host, discovered_port = discover_server()
+        if discovered_host:
+            config["server_host"] = discovered_host
+            config["server_port"] = str(discovered_port)
+        else:
+            print("[CONFIG] Auto-discovery failed. Using config.ini/default values.")
+            # Reset to default if it was set to AUTO
+            if config["server_host"] in ("AUTO", "auto", "0.0.0.0"):
+                config["server_host"] = DEFAULT_CONFIG["server_host"]
+
     return config
 
 
@@ -126,6 +141,68 @@ def get_or_create_agent_id():
 
 
 # ─────────────────────────────────────────────────────────
+# Hardware Fingerprint — unique per physical machine
+# ─────────────────────────────────────────────────────────
+
+def _get_hardware_fingerprint(agent_key):
+    """
+    Generate a hardware-bound fingerprint using HMAC-SHA256.
+    Combines: CPU info + primary MAC address + disk serial (if available).
+    Even if someone copies the agent files to another machine,
+    the fingerprint will be different → server rejects it.
+    """
+    parts = []
+
+    # CPU identifier
+    try:
+        parts.append(platform.processor() or platform.machine())
+    except Exception:
+        parts.append("unknown_cpu")
+
+    # Primary MAC address (first non-loopback interface)
+    try:
+        for iface, addrs in psutil.net_if_addrs().items():
+            for addr in addrs:
+                if addr.family == psutil.AF_LINK and addr.address and addr.address != "00:00:00:00:00:00":
+                    parts.append(addr.address)
+                    break
+            if len(parts) > 1:
+                break
+    except Exception:
+        parts.append("unknown_mac")
+
+    # Machine unique ID (hostname + platform node as fallback)
+    try:
+        parts.append(platform.node())
+    except Exception:
+        parts.append("unknown_node")
+
+    # Disk serial (Windows-specific, best effort)
+    try:
+        if platform.system() == "Windows":
+            import subprocess
+            result = subprocess.run(
+                ["wmic", "diskdrive", "get", "serialnumber"],
+                capture_output=True, text=True, timeout=5
+            )
+            serial = result.stdout.strip().split("\n")[-1].strip()
+            if serial and serial != "SerialNumber":
+                parts.append(serial)
+    except Exception:
+        pass
+
+    # Combine and hash with agent_key
+    raw = "|".join(parts)
+    hw_id = hmac.new(
+        agent_key.encode("utf-8"),
+        raw.encode("utf-8"),
+        hashlib.sha256
+    ).hexdigest()
+
+    return hw_id
+
+
+# ─────────────────────────────────────────────────────────
 # IP Detection (no external DNS, no noise)
 # ─────────────────────────────────────────────────────────
 
@@ -148,6 +225,46 @@ def get_local_ip(server_host):
             if addr.family == socket.AF_INET and not addr.address.startswith("127."):
                 return addr.address
     return "127.0.0.1"
+
+
+# ─────────────────────────────────────────────────────────
+# Server Auto-Discovery via UDP Broadcast
+# ─────────────────────────────────────────────────────────
+
+def discover_server(timeout=5, port=5001):
+    """
+    Send UDP broadcast 'IDS_DISCOVER' and wait for server response.
+    Returns (host, port) if found, or (None, None) if not.
+    Works on any network — home WiFi, mobile hotspot, any LAN.
+    """
+    try:
+        s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+        s.setsockopt(socket.SOL_SOCKET, socket.SO_BROADCAST, 1)
+        s.settimeout(timeout)
+
+        # Send broadcast
+        s.sendto(b"IDS_DISCOVER", ("<broadcast>", port))
+        print(f"[DISCOVERY] Sent broadcast on port {port}...")
+
+        data, addr = s.recvfrom(1024)
+        msg = data.decode("utf-8", errors="ignore").strip()
+
+        if msg.startswith("IDS_SERVER:"):
+            parts = msg.split(":")
+            if len(parts) >= 3:
+                server_host = parts[1]
+                server_port = int(parts[2])
+                print(f"[DISCOVERY] Found server at {server_host}:{server_port}")
+                s.close()
+                return server_host, server_port
+
+        s.close()
+    except socket.timeout:
+        print("[DISCOVERY] No server responded to broadcast.")
+    except Exception as e:
+        print(f"[DISCOVERY] Error: {e}")
+
+    return None, None
 
 
 # ─────────────────────────────────────────────────────────
@@ -324,10 +441,10 @@ def wait_for_server(session, url, interval=5):
     return False
 
 
-def register_with_backend(session, base_url, agent_id, host_name, ip):
+def register_with_backend(session, base_url, agent_id, host_name, ip, hardware_id=""):
     """
     Register this agent with the backend. Must be called after server is reachable.
-    Returns True if registered/already_registered, False if rejected.
+    Returns True if registered/approved, "pending" if awaiting approval, False if rejected.
     """
     url = base_url + "/register"
     payload = {
@@ -335,6 +452,7 @@ def register_with_backend(session, base_url, agent_id, host_name, ip):
         "host_name": host_name,
         "ip": ip,
         "os_info": f"{platform.system()} {platform.release()} ({platform.machine()})",
+        "hardware_id": hardware_id,
     }
 
     try:
@@ -345,11 +463,15 @@ def register_with_backend(session, base_url, agent_id, host_name, ip):
             approved = data.get("is_approved", False)
             print(f"[REGISTER] {status} (approved: {approved})")
             if not approved:
-                print("[REGISTER] Agent is NOT approved. Contact admin.")
-                return False
+                print("[REGISTER] Agent is PENDING admin approval. Waiting...")
+                return "pending"
             return True
         elif r.status_code == 401:
             print("[REGISTER] Bad agent key. Check config.ini")
+            return False
+        elif r.status_code == 403:
+            error_msg = r.json().get("error", "Rejected")
+            print(f"[REGISTER] REJECTED: {error_msg}")
             return False
         else:
             print(f"[REGISTER] Unexpected response: {r.status_code}")
@@ -385,12 +507,14 @@ def run_agent():
 
     host_name = socket.gethostname()
     agent_id = get_or_create_agent_id()
+    hardware_id = _get_hardware_fingerprint(agent_key)
 
     # Reuse TCP connection — one persistent session, no noise
     session = requests.Session()
     session.headers.update({
         "X-Agent-Key": agent_key,
         "X-Agent-ID": agent_id,
+        "X-Hardware-ID": hardware_id,
         "Content-Type": "application/json",
     })
 
@@ -399,6 +523,7 @@ def run_agent():
     print(f"  Host IDS Agent")
     print(f"  Host:     {host_name} ({ip})")
     print(f"  Agent ID: {agent_id[:8]}...")
+    print(f"  HW Hash:  {hardware_id[:16]}...")
     print(f"  Server:   {report_url}")
     print(f"  Window:   {window}s  |  Interval: {interval}s")
     print(f"  Press Ctrl+C to stop gracefully")
@@ -415,7 +540,23 @@ def run_agent():
 
     # ── Register with backend ──
     print("[REGISTER] Introducing this agent to the backend...")
-    if not register_with_backend(session, base_url, agent_id, host_name, ip):
+    reg_result = register_with_backend(session, base_url, agent_id, host_name, ip, hardware_id)
+    if reg_result == "pending":
+        # Wait for admin approval
+        print("[APPROVAL] Waiting for admin to approve this device...")
+        while not _shutdown:
+            _interruptible_sleep(10)
+            reg_result = register_with_backend(session, base_url, agent_id, host_name, ip, hardware_id)
+            if reg_result is True:
+                print("[APPROVAL] Device approved! Starting detection.")
+                break
+            elif reg_result is False:
+                print("[FATAL] Device rejected. Exiting.")
+                return
+            # Still pending — continue waiting
+        if _shutdown:
+            return
+    elif not reg_result:
         print("[FATAL] Registration failed. Cannot proceed.")
         return
 
