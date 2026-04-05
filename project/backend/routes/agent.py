@@ -176,6 +176,7 @@ def host_report():
             ip=ip,
             features=data["features"],
             activity_type=activity_type,
+            os_info=data.get("os_info") or (agent.os_info if agent else None),
         )
 
         # Log prediction for risk timeline

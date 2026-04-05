@@ -1,6 +1,7 @@
 import datetime
 import json
 import os
+import subprocess
 from typing import Any, Dict, List, Tuple
 
 
@@ -16,6 +17,7 @@ class InsiderThreatResponseOrchestrator:
     """
     Coordinates prevention decisions from model output.
     In TEST_MODE, actions are dry-run only (no OS-level blocking).
+    In LIVE_MODE, executes real OS-level prevention (firewall rules).
     """
 
     _initialized = False
@@ -23,6 +25,7 @@ class InsiderThreatResponseOrchestrator:
     _thresholds: Tuple[float, float, float] = (0.5, 0.7, 0.9)
     _log_path: str = ""
     _active_constraints: Dict[str, Dict[str, Any]] = {}
+    _blocked_hosts: Dict[str, Dict[str, Any]] = {}
 
     _type_policy = {
         "EMAIL": "Quarantine Action",
@@ -30,12 +33,10 @@ class InsiderThreatResponseOrchestrator:
         "HTTP": "Connection Reset Action",
     }
 
+    RULE_PREFIX = "IPS_HOST_BLOCK"
+
     @classmethod
     def initialize_and_reset(cls, config: Dict[str, Any]) -> None:
-        """
-        Must be called on startup.
-        Clears prior in-memory constraints and writes reset marker.
-        """
         backend_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
         instance_dir = os.path.join(backend_dir, "instance")
         os.makedirs(instance_dir, exist_ok=True)
@@ -49,6 +50,7 @@ class InsiderThreatResponseOrchestrator:
             os.path.join(instance_dir, "prevention_actions.log"),
         )
         cls._active_constraints = {}
+        cls._blocked_hosts = {}
         cls._initialized = True
 
         cls._write_log(
@@ -91,9 +93,11 @@ class InsiderThreatResponseOrchestrator:
         activity_type: str,
         prediction: str,
         probability: float,
+        host_ip: str = "",
     ) -> Dict[str, Any]:
         """
         Accepts model outcome + activity metadata and returns response action.
+        In LIVE mode with CRITICAL/MEDIUM: executes real firewall blocking.
         """
         if not cls._initialized:
             raise RuntimeError("Orchestrator not initialized. Call initialize_and_reset() first.")
@@ -116,6 +120,7 @@ class InsiderThreatResponseOrchestrator:
                 action=action,
                 response_message=response_message,
                 popup=False,
+                firewall_applied=False,
             )
             cls._write_log(
                 {
@@ -131,9 +136,20 @@ class InsiderThreatResponseOrchestrator:
 
         level, generic_action = cls._decision_level(probability)
         action = f"{generic_action} + {dtype_action}"
+
+        firewall_applied = False
+
+        # LIVE MODE: Execute real OS-level prevention
+        if not cls._test_mode and host_ip and level in {"MEDIUM", "CRITICAL"}:
+            firewall_applied = cls._apply_host_firewall_block(host_ip, host_name, level)
+            if firewall_applied:
+                action += " [FIREWALL BLOCK ACTIVE]"
+
+        mode_label = "TEST" if cls._test_mode else "LIVE"
         response_message = (
-            f"Threat detected ({level}) on host {host_name} for activity {normalized_activity} "
-            f"(prob={probability:.3f}). Planned response: {action}."
+            f"[{mode_label}] Threat detected ({level}) on host {host_name} "
+            f"for activity {normalized_activity} "
+            f"(prob={probability:.3f}). Response: {action}."
         )
 
         if level in {"MEDIUM", "CRITICAL"}:
@@ -141,6 +157,9 @@ class InsiderThreatResponseOrchestrator:
                 "activity_type": normalized_activity,
                 "action": action,
                 "probability": probability,
+                "level": level,
+                "firewall_applied": firewall_applied,
+                "host_ip": host_ip,
                 "updated_at": datetime.datetime.utcnow().isoformat(),
             }
 
@@ -148,12 +167,14 @@ class InsiderThreatResponseOrchestrator:
             {
                 "event": "preventive_decision",
                 "host_name": host_name,
+                "host_ip": host_ip,
                 "activity_type": normalized_activity,
                 "prediction": prediction,
                 "probability": probability,
                 "level": level,
                 "action": action,
                 "test_mode": cls._test_mode,
+                "firewall_applied": firewall_applied,
                 "response_message": response_message,
             }
         )
@@ -165,7 +186,135 @@ class InsiderThreatResponseOrchestrator:
             action=action,
             response_message=response_message,
             popup=True,
+            firewall_applied=firewall_applied,
         )
+
+    # ── Firewall Management ──
+
+    @classmethod
+    def _apply_host_firewall_block(cls, ip: str, host_name: str, level: str) -> bool:
+        """Block a host's IP via Windows Firewall. Returns True if successful."""
+        rule_name = f"{cls.RULE_PREFIX}_{ip.replace('.', '_')}"
+        try:
+            result = subprocess.run(
+                ["netsh", "advfirewall", "firewall", "add", "rule",
+                 f"name={rule_name}", "dir=in", "action=block",
+                 f"remoteip={ip}", "enable=yes"],
+                capture_output=True, text=True, timeout=10
+            )
+            success = result.returncode == 0
+            if success:
+                cls._blocked_hosts[ip] = {
+                    "host_name": host_name,
+                    "rule_name": rule_name,
+                    "level": level,
+                    "blocked_at": datetime.datetime.utcnow().isoformat(),
+                }
+                print(f"[HOST PREVENTION] BLOCKED host IP: {ip} ({host_name}) — Level: {level}")
+
+                cls._write_log({
+                    "event": "firewall_block_applied",
+                    "host_name": host_name,
+                    "host_ip": ip,
+                    "rule_name": rule_name,
+                    "level": level,
+                    "proof": f"Verify: netsh advfirewall firewall show rule name={rule_name}",
+                })
+            else:
+                print(f"[HOST PREVENTION] Failed to block {ip}: {result.stderr}")
+                cls._write_log({
+                    "event": "firewall_block_failed",
+                    "host_ip": ip,
+                    "error": result.stderr,
+                })
+            return success
+        except Exception as e:
+            print(f"[HOST PREVENTION] Exception blocking {ip}: {e}")
+            cls._write_log({"event": "firewall_block_error", "host_ip": ip, "error": str(e)})
+            return False
+
+    @classmethod
+    def remove_host_block(cls, ip: str) -> bool:
+        """Remove a firewall block for a specific host IP. Returns True if successful."""
+        rule_name = f"{cls.RULE_PREFIX}_{ip.replace('.', '_')}"
+        try:
+            result = subprocess.run(
+                ["netsh", "advfirewall", "firewall", "delete", "rule",
+                 f"name={rule_name}"],
+                capture_output=True, text=True, timeout=10
+            )
+            success = result.returncode == 0
+            if success:
+                cls._blocked_hosts.pop(ip, None)
+                cls._active_constraints = {
+                    k: v for k, v in cls._active_constraints.items()
+                    if v.get("host_ip") != ip
+                }
+                print(f"[HOST PREVENTION] UNBLOCKED host IP: {ip}")
+                cls._write_log({"event": "firewall_block_removed", "host_ip": ip, "rule_name": rule_name})
+            return success
+        except Exception as e:
+            print(f"[HOST PREVENTION] Failed to unblock {ip}: {e}")
+            return False
+
+    @classmethod
+    def remove_all_host_blocks(cls) -> int:
+        """Remove all IPS_HOST_BLOCK firewall rules. Returns count removed."""
+        removed = 0
+        try:
+            result = subprocess.run(
+                ["netsh", "advfirewall", "firewall", "show", "rule", "name=all"],
+                capture_output=True, text=True, timeout=15
+            )
+            for line in result.stdout.split("\n"):
+                if cls.RULE_PREFIX in line:
+                    rule_name = line.split(":")[-1].strip()
+                    subprocess.run(
+                        ["netsh", "advfirewall", "firewall", "delete", "rule",
+                         f"name={rule_name}"],
+                        capture_output=True, text=True, timeout=10
+                    )
+                    removed += 1
+            cls._blocked_hosts.clear()
+            cls._active_constraints.clear()
+            print(f"[HOST PREVENTION] Removed {removed} firewall rules")
+        except Exception as e:
+            print(f"[HOST PREVENTION] Error removing rules: {e}")
+        return removed
+
+    @classmethod
+    def verify_firewall_rules(cls) -> List[Dict[str, str]]:
+        """Verify which IPS_HOST_BLOCK firewall rules actually exist in the OS."""
+        rules = []
+        try:
+            result = subprocess.run(
+                ["netsh", "advfirewall", "firewall", "show", "rule", "name=all"],
+                capture_output=True, text=True, timeout=15
+            )
+            current_rule = {}
+            for line in result.stdout.split("\n"):
+                line = line.strip()
+                if line.startswith("Rule Name:") and cls.RULE_PREFIX in line:
+                    current_rule = {"name": line.split(":", 1)[1].strip()}
+                elif current_rule:
+                    if line.startswith("RemoteIP:"):
+                        current_rule["ip"] = line.split(":", 1)[1].strip()
+                    elif line.startswith("Action:"):
+                        current_rule["action"] = line.split(":", 1)[1].strip()
+                    elif line.startswith("Enabled:"):
+                        current_rule["enabled"] = line.split(":", 1)[1].strip()
+                        rules.append(current_rule)
+                        current_rule = {}
+        except Exception as e:
+            print(f"[HOST PREVENTION] Error verifying rules: {e}")
+        return rules
+
+    @classmethod
+    def get_blocked_hosts(cls) -> Dict[str, Dict[str, Any]]:
+        """Return currently blocked hosts (in-memory + verify with OS)."""
+        return dict(cls._blocked_hosts)
+
+    # ── Existing methods ──
 
     @classmethod
     def get_recent_logs(cls, limit: int = 100) -> List[Dict[str, Any]]:
@@ -193,6 +342,7 @@ class InsiderThreatResponseOrchestrator:
             "test_mode": cls._test_mode,
             "thresholds": cls.get_thresholds(),
             "active_constraints": cls._active_constraints,
+            "blocked_hosts": cls._blocked_hosts,
             "log_path": cls._log_path,
         }
 
@@ -213,10 +363,10 @@ class InsiderThreatResponseOrchestrator:
     def _decision_level(cls, probability: float) -> Tuple[str, str]:
         _, t_medium, t_critical = cls._thresholds
         if probability > t_critical:
-            return "CRITICAL", "Account Lock / Host Network Isolation"
+            return "CRITICAL", "Host Network Isolation"
         if probability >= t_medium:
-            return "MEDIUM", "MFA Challenge / Temporary Privilege Restriction"
-        return "LOW", "Log and Monitor Employee Activity"
+            return "MEDIUM", "Temporary Network Restriction"
+        return "LOW", "Log and Monitor Activity"
 
     @classmethod
     def _build_result(
@@ -228,6 +378,7 @@ class InsiderThreatResponseOrchestrator:
         action: str,
         response_message: str,
         popup: bool,
+        firewall_applied: bool = False,
     ) -> Dict[str, Any]:
         popup_payload = None
         if popup:
@@ -245,6 +396,7 @@ class InsiderThreatResponseOrchestrator:
             "action": action,
             "response_message": response_message,
             "popup": popup_payload,
+            "firewall_applied": firewall_applied,
         }
 
     @classmethod

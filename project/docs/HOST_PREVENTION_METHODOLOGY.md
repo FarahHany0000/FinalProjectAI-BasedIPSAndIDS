@@ -2,7 +2,7 @@
 
 ## Overview
 
-The Host-based Intrusion Prevention System (HIPS) monitors device behavior in real-time using AI models (XGBoost + Random Forest) to detect insider threats. When suspicious activity is detected, the system evaluates the threat level and takes automated response actions.
+The Host-based Intrusion Prevention System (HIPS) monitors device behavior in real-time using AI models (XGBoost + Random Forest) to detect insider threats. When suspicious activity is detected, the system evaluates the threat level and takes automated response actions — including **real OS-level firewall blocking** in Live mode.
 
 ---
 
@@ -43,18 +43,16 @@ The `InsiderThreatResponseOrchestrator` evaluates the threat probability against
 | Level | Default Threshold | Response |
 |-------|------------------|----------|
 | **LOW** | >= 0.50 | Log the event, increase monitoring frequency |
-| **MEDIUM** | >= 0.70 | Restrict file access, quarantine suspicious emails, alert admin |
-| **CRITICAL** | >= 0.90 | Kill suspicious processes, block network access, isolate device |
+| **MEDIUM** | >= 0.70 | Temporary network restriction via firewall (LIVE mode) |
+| **CRITICAL** | >= 0.90 | Full host network isolation via firewall (LIVE mode) |
 
 ### 4. Response Actions by Activity Type
 
 | Activity Type | LOW Response | MEDIUM Response | CRITICAL Response |
 |--------------|-------------|-----------------|-------------------|
-| **FILE** | Log access | Set read-only | Block and quarantine |
-| **EMAIL** | Flag for review | Quarantine email | Block email client |
-| **HTTP** | Log traffic | Rate limit | Connection reset |
-| **PROCESS** | Monitor | Suspend process | Kill process |
-| **NETWORK** | Log connection | Throttle bandwidth | Firewall block |
+| **FILE** | Log access | Read-only Enforcement + Firewall | Network Isolation + Firewall |
+| **EMAIL** | Flag for review | Quarantine + Firewall | Network Isolation + Firewall |
+| **HTTP** | Log traffic | Connection Reset + Firewall | Network Isolation + Firewall |
 
 ---
 
@@ -65,10 +63,68 @@ The `InsiderThreatResponseOrchestrator` evaluates the threat probability against
 - Safe for testing and evaluation
 - Toggle from: **Controls page -> Host Prevention -> Test Mode / Live Mode**
 
-### Live Mode
-- Real OS-level actions are executed (process kill, firewall rules, etc.)
+### Live Mode — Real Firewall Blocking
+- When threat level reaches **MEDIUM or CRITICAL**, the system executes **real Windows Firewall rules** to block the host's network access
+- Uses `netsh advfirewall firewall` to add inbound block rules
+- Rule naming pattern: `IPS_HOST_BLOCK_{ip_address}`
 - **Requires running backend as Administrator on Windows**
-- Enable carefully — confirm with the warning dialog
+
+---
+
+## How to Verify Prevention Actually Works
+
+### 1. Check Firewall Rules (Command Line Proof)
+```cmd
+netsh advfirewall firewall show rule name=all | findstr IPS_HOST_BLOCK
+```
+This shows all firewall rules created by the host prevention system.
+
+### 2. Check via API
+```
+GET /api/prevention/host/verify
+```
+Returns a list of all `IPS_HOST_BLOCK_*` rules currently active in Windows Firewall.
+
+### 3. Check Blocked Hosts
+```
+GET /api/prevention/host/blocked
+```
+Returns in-memory list of blocked host IPs with timestamps.
+
+### 4. Prevention Log File
+Located at: `project/backend/instance/prevention_actions.log`
+Each line is a JSON record with:
+- `event`: "firewall_block_applied" / "firewall_block_removed"
+- `host_ip`: the blocked IP
+- `rule_name`: the exact Windows Firewall rule name
+- `proof`: command to verify the rule exists
+
+---
+
+## Manual Controls
+
+### Block a Host IP
+```
+POST /api/prevention/host/block
+Body: {"ip": "192.168.1.100", "host_name": "laptop-01"}
+```
+
+### Unblock a Host IP
+```
+POST /api/prevention/host/unblock
+Body: {"ip": "192.168.1.100"}
+```
+
+### Clear All Blocks
+```
+POST /api/prevention/host/clear-all
+```
+
+### Switch Mode
+```
+POST /api/prevention/mode
+Body: {"test_mode": false}  // switches to LIVE mode
+```
 
 ---
 
@@ -88,26 +144,14 @@ From the Controls page -> Host Threat Thresholds section:
 | Endpoint | Method | Description |
 |----------|--------|-------------|
 | `/api/prevention/status` | GET | Current prevention system status |
-| `/api/prevention/thresholds` | GET | Current threshold values |
-| `/api/prevention/thresholds` | POST | Update thresholds and test_mode |
+| `/api/prevention/thresholds` | GET/POST | Get or update threshold values |
+| `/api/prevention/mode` | POST | Switch between TEST and LIVE mode |
 | `/api/prevention/logs` | GET | Recent prevention action logs |
-
----
-
-## Verification and Proof
-
-When prevention actions are taken, they are logged with:
-- **Timestamp** — when the action occurred
-- **Device name** — which device triggered it
-- **Risk level** — LOW / MEDIUM / CRITICAL
-- **Activity type** — what kind of activity was detected
-- **Action taken** — specific response executed
-- **Test mode flag** — whether it was a real action or simulated
-
-These logs are visible in:
-1. **Controls page** -> "Recent Host Prevention Actions" table
-2. **Device Detail page** -> individual device's prevention history
-3. **Backend API** -> `/api/prevention/logs` endpoint
+| `/api/prevention/host/block` | POST | Manually block a host IP |
+| `/api/prevention/host/unblock` | POST | Remove a host IP block |
+| `/api/prevention/host/blocked` | GET | List all currently blocked hosts |
+| `/api/prevention/host/verify` | GET | Verify firewall rules exist in OS |
+| `/api/prevention/host/clear-all` | POST | Remove all host firewall rules |
 
 ---
 
@@ -116,15 +160,18 @@ These logs are visible in:
 ```
 [Host Agent] -> collects 15 features every 10s
       |
-[Backend API] -> /api/agents/host-report
+[Backend API] -> /api/agent/host-report
       |
 [AI Models] -> XGBoost + RandomForest predict threat probability
       |
 [Response Orchestrator] -> evaluates against thresholds
       |
-[Action Engine] -> executes response (or logs in test mode)
+[TEST mode] -> Log only (no OS changes)
+[LIVE mode] -> Execute Windows Firewall rules
       |
-[Prevention Logs] -> stored in database, shown in UI
+[Firewall] -> netsh advfirewall: IPS_HOST_BLOCK_{ip}
+      |
+[Prevention Logs] -> JSON log file + API + UI
 ```
 
 ---
@@ -134,3 +181,4 @@ These logs are visible in:
 - **Hardware Fingerprint**: Each device generates a unique HMAC-SHA256 fingerprint from hardware identifiers. Copying the agent to another machine will be detected and rejected.
 - **Admin Approval**: New devices must be approved by admin before they can report data.
 - **Clone Detection**: If someone clones an agent, the different hardware fingerprint triggers automatic rejection.
+- **Administrator Required**: Firewall blocking only works when backend runs as Administrator.

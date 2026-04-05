@@ -577,6 +577,7 @@ def run_agent():
                 "host_name": host_name,
                 "ip": ip,
                 "features": features,
+                "os_info": f"{platform.system()} {platform.release()} ({platform.machine()})",
             }
 
             response = session.post(report_url, json=payload, timeout=30)

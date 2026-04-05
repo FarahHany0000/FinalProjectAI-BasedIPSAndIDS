@@ -76,6 +76,13 @@ def get_host_detail(hostname):
     host = Host.query.filter_by(host_name=hostname).order_by(Host.last_seen.desc()).first()
     host_data = host.to_dict() if host else {}
 
+    # Fallback: get os_info from RegisteredAgent if host doesn't have it
+    if host_data and not host_data.get("os_info"):
+        from models.registered_agent import RegisteredAgent
+        agent = RegisteredAgent.query.filter_by(host_name=hostname).first()
+        if agent and agent.os_info:
+            host_data["os_info"] = agent.os_info
+
     # Latest prediction with features
     latest_pred = (PredictionLog.query
                    .filter_by(host_name=hostname)

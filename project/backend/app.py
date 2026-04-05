@@ -229,6 +229,20 @@ def _migrate_db(app):
     except Exception as e:
         print(f"[MIGRATE] registered_agents: {e}")
 
+    # Migrate hosts table — add os_info
+    try:
+        conn = sqlite3.connect(db_path)
+        cursor = conn.cursor()
+        cursor.execute("PRAGMA table_info(hosts)")
+        cols = [row[1] for row in cursor.fetchall()]
+        if "os_info" not in cols:
+            cursor.execute("ALTER TABLE hosts ADD COLUMN os_info VARCHAR(200)")
+            print("[MIGRATE] Added 'os_info' to hosts")
+        conn.commit()
+        conn.close()
+    except Exception as e:
+        print(f"[MIGRATE] hosts.os_info: {e}")
+
 
 def create_app():
     """Application factory — creates and configures the Flask app."""

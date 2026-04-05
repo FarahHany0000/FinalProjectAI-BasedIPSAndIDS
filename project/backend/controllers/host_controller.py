@@ -11,7 +11,7 @@ class HostController:
     """Business logic for host agent reports and predictions."""
 
     @staticmethod
-    def process_report(agent_id, host_name, ip, features, activity_type="FILE"):
+    def process_report(agent_id, host_name, ip, features, activity_type="FILE", os_info=None):
         """
         Receive 15 features from the agent, run XGBoost prediction, update DB.
         Returns dict with prediction/probability/action/models.
@@ -56,6 +56,7 @@ class HostController:
             activity_type=activity_type,
             prediction=threat,
             probability=probability,
+            host_ip=ip or "",
         )
 
         if threat != "Normal":
@@ -84,7 +85,7 @@ class HostController:
                 host.agent_id = agent_id
 
         if not host:
-            host = Host(agent_id=agent_id, host_name=host_name, ip=ip, last_seen=now, status="Online", action=action)
+            host = Host(agent_id=agent_id, host_name=host_name, ip=ip, os_info=os_info, last_seen=now, status="Online", action=action)
             db.session.add(host)
         else:
             host.last_seen = now
@@ -92,6 +93,8 @@ class HostController:
             host.host_name = host_name
             host.action = action
             host.status = "Online"
+            if os_info:
+                host.os_info = os_info
 
         if threat != "Normal":
             alert = Alert(

@@ -471,7 +471,7 @@ export default function Controls() {
                 className={`ctrl-mode-btn ${hostPrevention?.test_mode !== false ? "selected" : ""}`}
                 onClick={async () => {
                   try {
-                    await fetch(`${API_BASE}/api/prevention/thresholds`, {
+                    await fetch(`${API_BASE}/api/prevention/mode`, {
                       method: "POST",
                       headers: { "Content-Type": "application/json" },
                       body: JSON.stringify({ test_mode: true }),
@@ -487,7 +487,7 @@ export default function Controls() {
                 onClick={async () => {
                   if (!window.confirm("⚠️ Enable LIVE mode? This will execute real prevention actions on host devices.")) return;
                   try {
-                    await fetch(`${API_BASE}/api/prevention/thresholds`, {
+                    await fetch(`${API_BASE}/api/prevention/mode`, {
                       method: "POST",
                       headers: { "Content-Type": "application/json" },
                       body: JSON.stringify({ test_mode: false }),
