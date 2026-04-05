@@ -220,6 +220,8 @@ def set_threshold():
 
 @dashboard_bp.route("/api/network/prevention", methods=["GET"])
 def get_prevention():
+    # Dedup blocked_ips before returning
+    _runtime_config["blocked_ips"] = list(dict.fromkeys(_runtime_config["blocked_ips"]))
     return jsonify({
         "enabled": _runtime_config["prevention_enabled"],
         "blocked_ips": _runtime_config["blocked_ips"],
@@ -390,34 +392,44 @@ def get_archive(filename):
 # ── Firewall helper functions (Windows netsh) ──
 
 def _apply_firewall_block(ip: str):
-    """Add a Windows Firewall rule to block an IP."""
+    """Add Windows Firewall rules to fully block an IP (inbound + outbound)."""
     import subprocess
-    rule_name = f"IDS_BLOCK_{ip.replace('.', '_')}"
+    rule_name_in = f"IDS_BLOCK_{ip.replace('.', '_')}_IN"
+    rule_name_out = f"IDS_BLOCK_{ip.replace('.', '_')}_OUT"
     try:
+        # Block inbound traffic from this IP
         subprocess.run(
             ["netsh", "advfirewall", "firewall", "add", "rule",
-             f"name={rule_name}", "dir=in", "action=block",
-             f"remoteip={ip}", "enable=yes"],
+             f"name={rule_name_in}", "dir=in", "action=block",
+             f"remoteip={ip}", "protocol=any", "enable=yes"],
             capture_output=True, text=True, timeout=10
         )
-        print(f"[PREVENTION] Blocked IP: {ip}")
+        # Block outbound traffic to this IP
+        subprocess.run(
+            ["netsh", "advfirewall", "firewall", "add", "rule",
+             f"name={rule_name_out}", "dir=out", "action=block",
+             f"remoteip={ip}", "protocol=any", "enable=yes"],
+            capture_output=True, text=True, timeout=10
+        )
+        print(f"[PREVENTION] Blocked IP: {ip} (in+out)")
     except Exception as e:
         print(f"[PREVENTION] Failed to block {ip}: {e}")
 
 
 def _remove_firewall_block(ip: str):
-    """Remove a Windows Firewall rule for an IP."""
+    """Remove Windows Firewall rules for an IP (inbound + outbound)."""
     import subprocess
-    rule_name = f"IDS_BLOCK_{ip.replace('.', '_')}"
-    try:
-        subprocess.run(
-            ["netsh", "advfirewall", "firewall", "delete", "rule",
-             f"name={rule_name}"],
-            capture_output=True, text=True, timeout=10
-        )
-        print(f"[PREVENTION] Unblocked IP: {ip}")
-    except Exception as e:
-        print(f"[PREVENTION] Failed to unblock {ip}: {e}")
+    for suffix in ("_IN", "_OUT", ""):
+        rule_name = f"IDS_BLOCK_{ip.replace('.', '_')}{suffix}"
+        try:
+            subprocess.run(
+                ["netsh", "advfirewall", "firewall", "delete", "rule",
+                 f"name={rule_name}"],
+                capture_output=True, text=True, timeout=10
+            )
+        except Exception:
+            pass
+    print(f"[PREVENTION] Unblocked IP: {ip}")
 
 
 def _remove_all_firewall_rules():

@@ -222,8 +222,13 @@ th {
 
 /* ================= Attack Row ================= */
 .attack-row {
-  background-color: rgba(255, 0, 0, 0.08) !important;
+  background-color: rgba(255, 0, 0, 0.15) !important;
   border-left: 4px solid #ef4444;
+  animation: attack-pulse 2s ease-in-out infinite;
+}
+@keyframes attack-pulse {
+  0%, 100% { background-color: rgba(255, 0, 0, 0.08); }
+  50% { background-color: rgba(255, 0, 0, 0.22); }
 }
 .offline-row {
   opacity: 0.6;

@@ -85,7 +85,9 @@ class HostController:
                 host.agent_id = agent_id
 
         if not host:
-            host = Host(agent_id=agent_id, host_name=host_name, ip=ip, os_info=os_info, last_seen=now, status="Online", action=action)
+            host = Host(agent_id=agent_id, host_name=host_name, ip=ip, os_info=os_info,
+                        last_prediction=threat, last_probability=probability,
+                        last_seen=now, status="Online", action=action)
             db.session.add(host)
         else:
             host.last_seen = now
@@ -93,6 +95,8 @@ class HostController:
             host.host_name = host_name
             host.action = action
             host.status = "Online"
+            host.last_prediction = threat
+            host.last_probability = probability
             if os_info:
                 host.os_info = os_info
 

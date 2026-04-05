@@ -193,20 +193,27 @@ class InsiderThreatResponseOrchestrator:
 
     @classmethod
     def _apply_host_firewall_block(cls, ip: str, host_name: str, level: str) -> bool:
-        """Block a host's IP via Windows Firewall. Returns True if successful."""
-        rule_name = f"{cls.RULE_PREFIX}_{ip.replace('.', '_')}"
+        """Block a host's IP via Windows Firewall (in+out). Returns True if successful."""
+        rule_in = f"{cls.RULE_PREFIX}_{ip.replace('.', '_')}_IN"
+        rule_out = f"{cls.RULE_PREFIX}_{ip.replace('.', '_')}_OUT"
         try:
-            result = subprocess.run(
+            r1 = subprocess.run(
                 ["netsh", "advfirewall", "firewall", "add", "rule",
-                 f"name={rule_name}", "dir=in", "action=block",
-                 f"remoteip={ip}", "enable=yes"],
+                 f"name={rule_in}", "dir=in", "action=block",
+                 f"remoteip={ip}", "protocol=any", "enable=yes"],
                 capture_output=True, text=True, timeout=10
             )
-            success = result.returncode == 0
+            r2 = subprocess.run(
+                ["netsh", "advfirewall", "firewall", "add", "rule",
+                 f"name={rule_out}", "dir=out", "action=block",
+                 f"remoteip={ip}", "protocol=any", "enable=yes"],
+                capture_output=True, text=True, timeout=10
+            )
+            success = r1.returncode == 0 or r2.returncode == 0
             if success:
                 cls._blocked_hosts[ip] = {
                     "host_name": host_name,
-                    "rule_name": rule_name,
+                    "rule_name": rule_in,
                     "level": level,
                     "blocked_at": datetime.datetime.utcnow().isoformat(),
                 }
@@ -216,16 +223,16 @@ class InsiderThreatResponseOrchestrator:
                     "event": "firewall_block_applied",
                     "host_name": host_name,
                     "host_ip": ip,
-                    "rule_name": rule_name,
+                    "rule_name": rule_in,
                     "level": level,
-                    "proof": f"Verify: netsh advfirewall firewall show rule name={rule_name}",
+                    "proof": f"Verify: netsh advfirewall firewall show rule name={rule_in}",
                 })
             else:
-                print(f"[HOST PREVENTION] Failed to block {ip}: {result.stderr}")
+                print(f"[HOST PREVENTION] Failed to block {ip}: {r1.stderr} {r2.stderr}")
                 cls._write_log({
                     "event": "firewall_block_failed",
                     "host_ip": ip,
-                    "error": result.stderr,
+                    "error": f"{r1.stderr} {r2.stderr}",
                 })
             return success
         except Exception as e:
@@ -235,27 +242,29 @@ class InsiderThreatResponseOrchestrator:
 
     @classmethod
     def remove_host_block(cls, ip: str) -> bool:
-        """Remove a firewall block for a specific host IP. Returns True if successful."""
-        rule_name = f"{cls.RULE_PREFIX}_{ip.replace('.', '_')}"
-        try:
-            result = subprocess.run(
-                ["netsh", "advfirewall", "firewall", "delete", "rule",
-                 f"name={rule_name}"],
-                capture_output=True, text=True, timeout=10
-            )
-            success = result.returncode == 0
-            if success:
-                cls._blocked_hosts.pop(ip, None)
-                cls._active_constraints = {
-                    k: v for k, v in cls._active_constraints.items()
-                    if v.get("host_ip") != ip
-                }
-                print(f"[HOST PREVENTION] UNBLOCKED host IP: {ip}")
-                cls._write_log({"event": "firewall_block_removed", "host_ip": ip, "rule_name": rule_name})
-            return success
-        except Exception as e:
-            print(f"[HOST PREVENTION] Failed to unblock {ip}: {e}")
-            return False
+        """Remove firewall blocks for a specific host IP (in+out). Returns True if successful."""
+        success = False
+        for suffix in ("_IN", "_OUT", ""):
+            rule_name = f"{cls.RULE_PREFIX}_{ip.replace('.', '_')}{suffix}"
+            try:
+                result = subprocess.run(
+                    ["netsh", "advfirewall", "firewall", "delete", "rule",
+                     f"name={rule_name}"],
+                    capture_output=True, text=True, timeout=10
+                )
+                if result.returncode == 0:
+                    success = True
+            except Exception:
+                pass
+        if success:
+            cls._blocked_hosts.pop(ip, None)
+            cls._active_constraints = {
+                k: v for k, v in cls._active_constraints.items()
+                if v.get("host_ip") != ip
+            }
+            print(f"[HOST PREVENTION] UNBLOCKED host IP: {ip}")
+            cls._write_log({"event": "firewall_block_removed", "host_ip": ip})
+        return success
 
     @classmethod
     def remove_all_host_blocks(cls) -> int:

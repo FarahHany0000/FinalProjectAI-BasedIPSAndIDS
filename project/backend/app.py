@@ -229,7 +229,7 @@ def _migrate_db(app):
     except Exception as e:
         print(f"[MIGRATE] registered_agents: {e}")
 
-    # Migrate hosts table — add os_info
+    # Migrate hosts table — add os_info, last_prediction, last_probability
     try:
         conn = sqlite3.connect(db_path)
         cursor = conn.cursor()
@@ -238,10 +238,16 @@ def _migrate_db(app):
         if "os_info" not in cols:
             cursor.execute("ALTER TABLE hosts ADD COLUMN os_info VARCHAR(200)")
             print("[MIGRATE] Added 'os_info' to hosts")
+        if "last_prediction" not in cols:
+            cursor.execute("ALTER TABLE hosts ADD COLUMN last_prediction VARCHAR(50) DEFAULT 'Normal'")
+            print("[MIGRATE] Added 'last_prediction' to hosts")
+        if "last_probability" not in cols:
+            cursor.execute("ALTER TABLE hosts ADD COLUMN last_probability FLOAT DEFAULT 0.0")
+            print("[MIGRATE] Added 'last_probability' to hosts")
         conn.commit()
         conn.close()
     except Exception as e:
-        print(f"[MIGRATE] hosts.os_info: {e}")
+        print(f"[MIGRATE] hosts: {e}")
 
 
 def create_app():

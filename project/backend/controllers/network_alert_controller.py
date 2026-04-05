@@ -3,6 +3,9 @@ from extensions import db, socketio
 from models.alert import Alert
 from datetime import datetime
 import time
+import threading
+
+_block_lock = threading.Lock()
 
 
 class NetworkAlertController:
@@ -100,6 +103,7 @@ class NetworkAlertController:
         Auto-block logic:
         1. If prevention is enabled and IP not already blocked → block after RATE_LIMIT_MAX alerts
         2. Rate limiting: tracks alerts per IP within a time window
+        Thread-safe with lock to prevent duplicate blocks.
         """
         try:
             from routes.dashboard import _runtime_config, _apply_firewall_block
@@ -107,31 +111,32 @@ class NetworkAlertController:
             if not _runtime_config.get("prevention_enabled", False):
                 return False
 
-            if src_ip in _runtime_config.get("blocked_ips", []):
-                return True  # already blocked
+            with _block_lock:
+                if src_ip in _runtime_config.get("blocked_ips", []):
+                    return True  # already blocked
 
-            # Track alert rate for this IP
-            now = time.time()
-            history = NetworkAlertController._ip_alert_history
-            if src_ip not in history:
-                history[src_ip] = []
+                # Track alert rate for this IP
+                now = time.time()
+                history = NetworkAlertController._ip_alert_history
+                if src_ip not in history:
+                    history[src_ip] = []
 
-            # Clean old entries outside the window
-            window = NetworkAlertController.RATE_LIMIT_WINDOW
-            history[src_ip] = [t for t in history[src_ip] if now - t < window]
-            history[src_ip].append(now)
+                # Clean old entries outside the window
+                window = NetworkAlertController.RATE_LIMIT_WINDOW
+                history[src_ip] = [t for t in history[src_ip] if now - t < window]
+                history[src_ip].append(now)
 
-            # If IP exceeded rate limit → auto-block
-            if len(history[src_ip]) >= NetworkAlertController.RATE_LIMIT_MAX:
-                _apply_firewall_block(src_ip)
-                _runtime_config["blocked_ips"].append(src_ip)
-                history[src_ip] = []  # reset counter
-                print(f"[AUTO-BLOCK] Blocked {src_ip} after {NetworkAlertController.RATE_LIMIT_MAX} "
-                      f"alerts in {window}s ({attack_type})")
-                socketio.emit("config_update", {
-                    "blocked_ips": _runtime_config["blocked_ips"],
-                })
-                return True
+                # If IP exceeded rate limit → auto-block
+                if len(history[src_ip]) >= NetworkAlertController.RATE_LIMIT_MAX:
+                    _apply_firewall_block(src_ip)
+                    _runtime_config["blocked_ips"].append(src_ip)
+                    history[src_ip] = []  # reset counter
+                    print(f"[AUTO-BLOCK] Blocked {src_ip} after {NetworkAlertController.RATE_LIMIT_MAX} "
+                          f"alerts in {window}s ({attack_type})")
+                    socketio.emit("config_update", {
+                        "blocked_ips": _runtime_config["blocked_ips"],
+                    })
+                    return True
 
             return False
         except Exception as e:
