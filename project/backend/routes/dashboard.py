@@ -107,6 +107,14 @@ def get_host_detail(hostname):
     attack_count = sum(1 for p in recent_preds if p.prediction == "Attack")
     avg_prob = sum(p.probability for p in recent_preds) / len(recent_preds) if recent_preds else 0
 
+    # Alert stats for this host
+    total_host_alerts = Alert.query.filter_by(host_name=hostname).count()
+    malicious_alerts = Alert.query.filter(
+        Alert.host_name == hostname,
+        Alert.threat_type != "Normal",
+        Alert.threat_type != None
+    ).count()
+
     return jsonify({
         "host": host_data,
         "latest_prediction": latest_pred_data,
@@ -115,6 +123,8 @@ def get_host_detail(hostname):
             "total_predictions_30m": len(recent_preds),
             "attack_predictions_30m": attack_count,
             "avg_probability_30m": round(avg_prob, 4),
+            "total_alerts": total_host_alerts,
+            "malicious_count": malicious_alerts,
         }
     })
 
