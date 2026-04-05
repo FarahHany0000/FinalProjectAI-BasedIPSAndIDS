@@ -6,12 +6,13 @@ class RegisteredAgent(db.Model):
     """
     Each physical device running the agent gets a unique row here.
     agent_id is a UUID generated on the device at first run.
-    The backend uses this to know exactly which devices exist.
+    hardware_id is HMAC-SHA256 hash of hardware identifiers (CPU, disk, MAC, motherboard).
     """
     __tablename__ = "registered_agents"
 
     id = db.Column(db.Integer, primary_key=True)
     agent_id = db.Column(db.String(64), unique=True, nullable=False, index=True)
+    hardware_id = db.Column(db.String(128), index=True)
     host_name = db.Column(db.String(100), nullable=False)
     ip = db.Column(db.String(100))
     os_info = db.Column(db.String(200))
@@ -24,6 +25,7 @@ class RegisteredAgent(db.Model):
         return {
             "id": self.id,
             "agent_id": self.agent_id,
+            "hardware_id": self.hardware_id,
             "host_name": self.host_name,
             "ip": self.ip,
             "os_info": self.os_info,

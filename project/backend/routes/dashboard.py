@@ -48,6 +48,94 @@ def get_all_alerts():
     return jsonify(AlertController.get_all_alerts())
 
 
+# ── Host Detail & Prediction Timeline ──
+
+@dashboard_bp.route("/api/hosts/<hostname>/predictions", methods=["GET"])
+def get_host_predictions(hostname):
+    """Get prediction timeline for a specific host (last 30 min default)."""
+    from models.prediction_log import PredictionLog
+    minutes = request.args.get("minutes", 30, type=int)
+    limit = request.args.get("limit", 200, type=int)
+    cutoff = datetime.datetime.now() - datetime.timedelta(minutes=minutes)
+    logs = (PredictionLog.query
+            .filter(PredictionLog.host_name == hostname,
+                    PredictionLog.time >= cutoff)
+            .order_by(PredictionLog.time.desc())
+            .limit(limit)
+            .all())
+    return jsonify([l.to_dict() for l in logs])
+
+
+@dashboard_bp.route("/api/hosts/<hostname>/detail", methods=["GET"])
+def get_host_detail(hostname):
+    """Get comprehensive host detail including latest features, predictions, alerts."""
+    from models.prediction_log import PredictionLog
+    from models.host import Host
+
+    # Latest host record
+    host = Host.query.filter_by(host_name=hostname).order_by(Host.last_seen.desc()).first()
+    host_data = host.to_dict() if host else {}
+
+    # Latest prediction with features
+    latest_pred = (PredictionLog.query
+                   .filter_by(host_name=hostname)
+                   .order_by(PredictionLog.time.desc())
+                   .first())
+    latest_pred_data = latest_pred.to_dict() if latest_pred else None
+
+    # Recent alerts for this host
+    alerts = (Alert.query
+              .filter_by(host_name=hostname)
+              .order_by(Alert.time.desc())
+              .limit(20)
+              .all())
+
+    # Prediction stats (last 30 min)
+    cutoff = datetime.datetime.now() - datetime.timedelta(minutes=30)
+    recent_preds = (PredictionLog.query
+                    .filter(PredictionLog.host_name == hostname,
+                            PredictionLog.time >= cutoff)
+                    .all())
+
+    attack_count = sum(1 for p in recent_preds if p.prediction == "Attack")
+    avg_prob = sum(p.probability for p in recent_preds) / len(recent_preds) if recent_preds else 0
+
+    return jsonify({
+        "host": host_data,
+        "latest_prediction": latest_pred_data,
+        "alerts": [a.to_dict() for a in alerts],
+        "stats": {
+            "total_predictions_30m": len(recent_preds),
+            "attack_predictions_30m": attack_count,
+            "avg_probability_30m": round(avg_prob, 4),
+        }
+    })
+
+
+@dashboard_bp.route("/api/alerts/trends", methods=["GET"])
+def get_alert_trends():
+    """Get alert counts grouped by hour for the last 24 hours."""
+    hours = request.args.get("hours", 24, type=int)
+    cutoff = datetime.datetime.now() - datetime.timedelta(hours=hours)
+    alerts = Alert.query.filter(Alert.time >= cutoff).all()
+
+    # Group by hour
+    hourly = {}
+    severity_counts = {"Critical": 0, "High": 0, "Medium": 0, "Low": 0}
+    for alert in alerts:
+        hour_key = alert.time.strftime("%Y-%m-%d %H:00") if alert.time else "unknown"
+        hourly[hour_key] = hourly.get(hour_key, 0) + 1
+        sev = alert.severity or "Medium"
+        if sev in severity_counts:
+            severity_counts[sev] += 1
+
+    return jsonify({
+        "hourly": hourly,
+        "severity": severity_counts,
+        "total": len(alerts),
+    })
+
+
 @dashboard_bp.route("/api/dashboard/stats", methods=["GET"])
 def dashboard_stats():
     return jsonify(AlertController.get_dashboard_stats())

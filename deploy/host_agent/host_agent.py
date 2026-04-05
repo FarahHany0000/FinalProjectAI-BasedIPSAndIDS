@@ -1,0 +1,638 @@
+# host_agent.py — Lightweight Host IDS Agent
+# Deploy this file + config.ini + requirements.txt to each monitored device.
+# Collects 15 CERT Insider Threat features via psutil, sends JSON to backend.
+#
+# Usage:
+#   pip install -r requirements.txt
+#   python host_agent.py                     (uses config.ini)
+#   python host_agent.py --server 192.168.137.1:5000 --key mytoken
+#
+# Design:
+#   - ONE outgoing connection to backend (port 5000 only)
+#   - No DNS lookups to external services
+#   - Reuses TCP connection via requests.Session (keep-alive)
+#   - Minimal footprint: psutil + requests only
+#   - Graceful shutdown on Ctrl+C
+#   - Heartbeat: waits for backend before starting detection loop
+#   - Unique agent_id: registers with backend to prove identity
+
+import os
+import sys
+import time
+import uuid
+import signal
+import socket
+import platform
+import argparse
+import configparser
+import hashlib
+import hmac
+import json
+import psutil
+from datetime import datetime
+
+try:
+    import requests
+except ImportError:
+    print("[FATAL] 'requests' not installed. Run: pip install requests")
+    sys.exit(1)
+
+# ─────────────────────────────────────────────────────────
+# Graceful Shutdown
+# ─────────────────────────────────────────────────────────
+
+_shutdown = False
+
+
+def _handle_signal(signum, frame):
+    global _shutdown
+    _shutdown = True
+    print("\n[INFO] Shutdown signal received. Finishing current cycle...")
+
+
+signal.signal(signal.SIGINT, _handle_signal)
+signal.signal(signal.SIGTERM, _handle_signal)
+
+# ─────────────────────────────────────────────────────────
+# Configuration
+# ─────────────────────────────────────────────────────────
+
+DEFAULT_CONFIG = {
+    "server_host": "192.168.137.1",   # Laptop5 gateway IP (Windows Mobile Hotspot default)
+    "server_port": "5000",
+    "agent_key": "changeme",
+    "interval": "10",                  # seconds between reports
+    "window": "5",                     # seconds to sample disk/net deltas
+    "endpoint": "/api/agent/host-report",
+}
+
+
+def load_config():
+    """Load config from config.ini if present, then override with CLI args."""
+    config = dict(DEFAULT_CONFIG)
+
+    ini_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "config.ini")
+    if os.path.exists(ini_path):
+        cp = configparser.ConfigParser()
+        cp.read(ini_path)
+        if cp.has_section("agent"):
+            config.update(dict(cp.items("agent")))
+
+    parser = argparse.ArgumentParser(description="Host IDS Agent")
+    parser.add_argument("--server", help="Backend address host:port")
+    parser.add_argument("--key", help="Agent authentication key")
+    parser.add_argument("--interval", type=int, help="Seconds between reports")
+    parser.add_argument("--window", type=int, help="Seconds to sample deltas")
+    args = parser.parse_args()
+
+    if args.server:
+        if ":" in args.server:
+            host, port = args.server.rsplit(":", 1)
+            config["server_host"] = host
+            config["server_port"] = port
+        else:
+            config["server_host"] = args.server
+    if args.key:
+        config["agent_key"] = args.key
+    if args.interval:
+        config["interval"] = str(args.interval)
+    if args.window:
+        config["window"] = str(args.window)
+
+    # Auto-discovery: if server_host is "AUTO" or default, try UDP broadcast
+    if config["server_host"] in ("AUTO", "auto", "0.0.0.0"):
+        discovered_host, discovered_port = discover_server()
+        if discovered_host:
+            config["server_host"] = discovered_host
+            config["server_port"] = str(discovered_port)
+        else:
+            print("[CONFIG] Auto-discovery failed. Using config.ini/default values.")
+            # Reset to default if it was set to AUTO
+            if config["server_host"] in ("AUTO", "auto", "0.0.0.0"):
+                config["server_host"] = DEFAULT_CONFIG["server_host"]
+
+    return config
+
+
+# ─────────────────────────────────────────────────────────
+# Agent Identity — unique ID per device
+# ─────────────────────────────────────────────────────────
+
+AGENT_ID_FILE = os.path.join(os.path.dirname(os.path.abspath(__file__)), ".agent_id")
+
+
+def get_or_create_agent_id():
+    """
+    Load agent_id from .agent_id file, or generate a new UUID on first run.
+    This ID is unique per device and persists across restarts.
+    """
+    if os.path.exists(AGENT_ID_FILE):
+        with open(AGENT_ID_FILE, "r") as f:
+            agent_id = f.read().strip()
+            if agent_id:
+                return agent_id
+
+    # First run — generate new UUID
+    agent_id = str(uuid.uuid4())
+    with open(AGENT_ID_FILE, "w") as f:
+        f.write(agent_id)
+    print(f"[IDENTITY] New agent_id generated: {agent_id[:8]}...")
+    return agent_id
+
+
+# ─────────────────────────────────────────────────────────
+# Hardware Fingerprint — unique per physical machine
+# ─────────────────────────────────────────────────────────
+
+def _get_hardware_fingerprint(agent_key):
+    """
+    Generate a hardware-bound fingerprint using HMAC-SHA256.
+    Combines: CPU info + primary MAC address + disk serial (if available).
+    Even if someone copies the agent files to another machine,
+    the fingerprint will be different → server rejects it.
+    """
+    parts = []
+
+    # CPU identifier
+    try:
+        parts.append(platform.processor() or platform.machine())
+    except Exception:
+        parts.append("unknown_cpu")
+
+    # Primary MAC address (first non-loopback interface)
+    try:
+        for iface, addrs in psutil.net_if_addrs().items():
+            for addr in addrs:
+                if addr.family == psutil.AF_LINK and addr.address and addr.address != "00:00:00:00:00:00":
+                    parts.append(addr.address)
+                    break
+            if len(parts) > 1:
+                break
+    except Exception:
+        parts.append("unknown_mac")
+
+    # Machine unique ID (hostname + platform node as fallback)
+    try:
+        parts.append(platform.node())
+    except Exception:
+        parts.append("unknown_node")
+
+    # Disk serial (Windows-specific, best effort)
+    try:
+        if platform.system() == "Windows":
+            import subprocess
+            result = subprocess.run(
+                ["wmic", "diskdrive", "get", "serialnumber"],
+                capture_output=True, text=True, timeout=5
+            )
+            serial = result.stdout.strip().split("\n")[-1].strip()
+            if serial and serial != "SerialNumber":
+                parts.append(serial)
+    except Exception:
+        pass
+
+    # Combine and hash with agent_key
+    raw = "|".join(parts)
+    hw_id = hmac.new(
+        agent_key.encode("utf-8"),
+        raw.encode("utf-8"),
+        hashlib.sha256
+    ).hexdigest()
+
+    return hw_id
+
+
+# ─────────────────────────────────────────────────────────
+# IP Detection (no external DNS, no noise)
+# ─────────────────────────────────────────────────────────
+
+def get_local_ip(server_host):
+    """
+    Get this machine's IP on the network facing the server.
+    Uses a UDP socket pointed at the server (no actual packet sent).
+    """
+    try:
+        s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+        s.connect((server_host, 1))
+        ip = s.getsockname()[0]
+        s.close()
+        return ip
+    except Exception:
+        pass
+
+    for iface, addrs in psutil.net_if_addrs().items():
+        for addr in addrs:
+            if addr.family == socket.AF_INET and not addr.address.startswith("127."):
+                return addr.address
+    return "127.0.0.1"
+
+
+# ─────────────────────────────────────────────────────────
+# Server Auto-Discovery via UDP Broadcast
+# ─────────────────────────────────────────────────────────
+
+def discover_server(timeout=5, port=5001):
+    """
+    Send UDP broadcast 'IDS_DISCOVER' and wait for server response.
+    Returns (host, port) if found, or (None, None) if not.
+    Works on any network — home WiFi, mobile hotspot, any LAN.
+    """
+    try:
+        s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+        s.setsockopt(socket.SOL_SOCKET, socket.SO_BROADCAST, 1)
+        s.settimeout(timeout)
+
+        # Send broadcast
+        s.sendto(b"IDS_DISCOVER", ("<broadcast>", port))
+        print(f"[DISCOVERY] Sent broadcast on port {port}...")
+
+        data, addr = s.recvfrom(1024)
+        msg = data.decode("utf-8", errors="ignore").strip()
+
+        if msg.startswith("IDS_SERVER:"):
+            parts = msg.split(":")
+            if len(parts) >= 3:
+                server_host = parts[1]
+                server_port = int(parts[2])
+                print(f"[DISCOVERY] Found server at {server_host}:{server_port}")
+                s.close()
+                return server_host, server_port
+
+        s.close()
+    except socket.timeout:
+        print("[DISCOVERY] No server responded to broadcast.")
+    except Exception as e:
+        print(f"[DISCOVERY] Error: {e}")
+
+    return None, None
+
+
+# ─────────────────────────────────────────────────────────
+# Feature Collection (15 CERT Insider Threat features)
+# ─────────────────────────────────────────────────────────
+
+FEATURE_NAMES = [
+    "total_logons",
+    "avg_logon_hour",
+    "std_logon_hour",
+    "weekend_logons",
+    "after_hours_logons",
+    "unique_pcs_logon",
+    "total_device_activities",
+    "unique_pcs_device",
+    "avg_device_hour",
+    "after_hours_device",
+    "total_file_activities",
+    "unique_files",
+    "unique_pcs_file",
+    "avg_file_hour",
+    "after_hours_files",
+]
+
+
+def _count_recent_files(max_age_seconds=300, max_scan_time=3):
+    """
+    Count files modified within the last N seconds in user home dirs.
+    Caps scan time to avoid blocking on large directories.
+    """
+    home = os.path.expanduser("~")
+    scan_dirs = [
+        os.path.join(home, "Desktop"),
+        os.path.join(home, "Downloads"),
+        os.path.join(home, "Documents"),
+    ]
+    now_ts = time.time()
+    deadline = now_ts + max_scan_time
+    count = 0
+
+    for scan_root in scan_dirs:
+        if not os.path.exists(scan_root):
+            continue
+        for base, dirs, files in os.walk(scan_root):
+            if time.time() > deadline:
+                return count
+            # Skip deep/hidden/large dirs
+            dirs[:] = [d for d in dirs if not d.startswith('.') and d not in
+                       ('node_modules', '__pycache__', '.git', 'venv', '.venv')]
+            for name in files:
+                try:
+                    path = os.path.join(base, name)
+                    if now_ts - os.stat(path).st_mtime <= max_age_seconds:
+                        count += 1
+                except Exception:
+                    pass
+    return count
+
+
+def _net_snapshot():
+    """Capture current network counters + connection stats."""
+    c = psutil.net_io_counters()
+    conns = psutil.net_connections(kind='inet')
+    return {
+        "bytes_sent": c.bytes_sent,
+        "bytes_recv": c.bytes_recv,
+        "packets_sent": c.packets_sent,
+        "packets_recv": c.packets_recv,
+        "connections": len(conns),
+        "established": sum(1 for x in conns if x.status == "ESTABLISHED"),
+    }
+
+
+def collect_features(window_seconds):
+    """
+    Collect 15 CERT features matching the proven Host LIVE Test.py approach.
+    Uses network snapshots + recent file counting (NOT raw disk I/O).
+    Returns (features_list, extras_dict)
+    """
+    # Snapshot before
+    prev = _net_snapshot()
+    time.sleep(window_seconds)
+
+    # Snapshot after
+    now = datetime.now()
+    curr = _net_snapshot()
+    hour = now.hour
+    weekend = 1 if now.weekday() >= 5 else 0
+    after_hours = 1 if (hour < 8 or hour > 18) else 0
+
+    # Deltas
+    d_packets_sent = curr["packets_sent"] - prev["packets_sent"]
+    d_packets_recv = curr["packets_recv"] - prev["packets_recv"]
+    total_packets = max(0, d_packets_sent + d_packets_recv)
+
+    # File activity — count recently modified files (same as "next try")
+    recent_files = _count_recent_files(300)
+
+    # ── Build 15 features in exact model order ──
+    total_logons = float(curr["connections"])
+    total_device_activities = float(total_packets)
+    total_file_activities = float(recent_files)
+
+    features = [
+        total_logons,                                    # 0: total_logons
+        float(hour),                                     # 1: avg_logon_hour
+        0.5 if total_logons > 0 else 0.0,               # 2: std_logon_hour
+        float(weekend * total_logons),                   # 3: weekend_logons
+        float(after_hours * total_logons),               # 4: after_hours_logons
+        1.0,                                             # 5: unique_pcs_logon
+        total_device_activities,                         # 6: total_device_activities
+        1.0 if total_packets > 0 else 0.0,              # 7: unique_pcs_device
+        float(hour),                                     # 8: avg_device_hour
+        float(after_hours * total_device_activities),    # 9: after_hours_device
+        total_file_activities,                           # 10: total_file_activities
+        float(recent_files),                             # 11: unique_files
+        1.0 if recent_files > 0 else 0.0,               # 12: unique_pcs_file
+        float(hour),                                     # 13: avg_file_hour
+        float(after_hours * total_file_activities),      # 14: after_hours_files
+    ]
+
+    extras = {
+        "net_packets_delta": int(total_packets),
+        "connections": curr["connections"],
+        "established": curr["established"],
+        "recent_files": recent_files,
+        "is_after_hours": after_hours,
+        "is_weekend": weekend,
+        "hour": hour,
+    }
+
+    return features, extras
+
+
+# ─────────────────────────────────────────────────────────
+# Heartbeat — wait for backend before starting detection
+# ─────────────────────────────────────────────────────────
+
+def wait_for_server(session, url, interval=5):
+    """
+    Block until the backend responds or shutdown is requested.
+    Tries every `interval` seconds. Shows a heartbeat in the console.
+    """
+    attempt = 0
+    while not _shutdown:
+        attempt += 1
+        try:
+            r = session.get(
+                url.rsplit("/", 1)[0] + "/health",
+                timeout=5,
+            )
+            if r.status_code == 200:
+                print(f"[HEARTBEAT] Server is UP (attempt {attempt})")
+                return True
+        except requests.exceptions.ConnectionError:
+            pass
+        except Exception:
+            pass
+
+        # Also accept a successful POST (in case /health doesn't exist yet)
+        try:
+            r = session.options(url, timeout=3)
+            if r.status_code < 500:
+                print(f"[HEARTBEAT] Server reachable (attempt {attempt})")
+                return True
+        except Exception:
+            pass
+
+        ts = datetime.now().strftime("%H:%M:%S")
+        backoff = min(interval + (attempt * 2), 60)
+        print(f"[{ts}] [HEARTBEAT] Waiting for server... (attempt {attempt}, retry in {backoff}s)")
+        _interruptible_sleep(backoff)
+
+    return False
+
+
+def register_with_backend(session, base_url, agent_id, host_name, ip, hardware_id=""):
+    """
+    Register this agent with the backend. Must be called after server is reachable.
+    Returns True if registered/approved, "pending" if awaiting approval, False if rejected.
+    """
+    url = base_url + "/register"
+    payload = {
+        "agent_id": agent_id,
+        "host_name": host_name,
+        "ip": ip,
+        "os_info": f"{platform.system()} {platform.release()} ({platform.machine()})",
+        "hardware_id": hardware_id,
+    }
+
+    try:
+        r = session.post(url, json=payload, timeout=10)
+        if r.status_code in (200, 201):
+            data = r.json()
+            status = data.get("status", "unknown")
+            approved = data.get("is_approved", False)
+            print(f"[REGISTER] {status} (approved: {approved})")
+            if not approved:
+                print("[REGISTER] Agent is PENDING admin approval. Waiting...")
+                return "pending"
+            return True
+        elif r.status_code == 401:
+            print("[REGISTER] Bad agent key. Check config.ini")
+            return False
+        elif r.status_code == 403:
+            error_msg = r.json().get("error", "Rejected")
+            print(f"[REGISTER] REJECTED: {error_msg}")
+            return False
+        else:
+            print(f"[REGISTER] Unexpected response: {r.status_code}")
+            return False
+    except Exception as e:
+        print(f"[REGISTER] Failed: {e}")
+        return False
+
+
+def _interruptible_sleep(seconds):
+    """Sleep that can be interrupted by Ctrl+C (checks _shutdown every 0.5s)."""
+    end = time.time() + seconds
+    while time.time() < end and not _shutdown:
+        time.sleep(min(0.5, end - time.time()))
+
+
+# ─────────────────────────────────────────────────────────
+# Main Agent Loop
+# ─────────────────────────────────────────────────────────
+
+def run_agent():
+    config = load_config()
+
+    server_host = config["server_host"]
+    server_port = int(config["server_port"])
+    agent_key = config["agent_key"]
+    interval = int(config["interval"])
+    window = int(config["window"])
+    endpoint = config["endpoint"]
+
+    base_url = f"http://{server_host}:{server_port}/api/agent"
+    report_url = f"http://{server_host}:{server_port}{endpoint}"
+
+    host_name = socket.gethostname()
+    agent_id = get_or_create_agent_id()
+    hardware_id = _get_hardware_fingerprint(agent_key)
+
+    # Reuse TCP connection — one persistent session, no noise
+    session = requests.Session()
+    session.headers.update({
+        "X-Agent-Key": agent_key,
+        "X-Agent-ID": agent_id,
+        "X-Hardware-ID": hardware_id,
+        "Content-Type": "application/json",
+    })
+
+    ip = get_local_ip(server_host)
+    print("=" * 50)
+    print(f"  Host IDS Agent")
+    print(f"  Host:     {host_name} ({ip})")
+    print(f"  Agent ID: {agent_id[:8]}...")
+    print(f"  HW Hash:  {hardware_id[:16]}...")
+    print(f"  Server:   {report_url}")
+    print(f"  Window:   {window}s  |  Interval: {interval}s")
+    print(f"  Press Ctrl+C to stop gracefully")
+    print("=" * 50)
+
+    if agent_key == "changeme":
+        print("[WARN] Using default agent key. Set a real key in config.ini")
+
+    # ── Heartbeat: wait for backend ──
+    print("[HEARTBEAT] Checking if backend is reachable...")
+    if not wait_for_server(session, report_url):
+        print("[INFO] Shutdown requested before server came up. Exiting.")
+        return
+
+    # ── Register with backend ──
+    print("[REGISTER] Introducing this agent to the backend...")
+    reg_result = register_with_backend(session, base_url, agent_id, host_name, ip, hardware_id)
+    if reg_result == "pending":
+        # Wait for admin approval
+        print("[APPROVAL] Waiting for admin to approve this device...")
+        while not _shutdown:
+            _interruptible_sleep(10)
+            reg_result = register_with_backend(session, base_url, agent_id, host_name, ip, hardware_id)
+            if reg_result is True:
+                print("[APPROVAL] Device approved! Starting detection.")
+                break
+            elif reg_result is False:
+                print("[FATAL] Device rejected. Exiting.")
+                return
+            # Still pending — continue waiting
+        if _shutdown:
+            return
+    elif not reg_result:
+        print("[FATAL] Registration failed. Cannot proceed.")
+        return
+
+    print("[INFO] Backend is online. Agent is registered. Starting detection loop.\n")
+    consecutive_errors = 0
+
+    while not _shutdown:
+        try:
+            ip = get_local_ip(server_host)
+
+            features, extras = collect_features(window)
+
+            if _shutdown:
+                break
+
+            payload = {
+                "agent_id": agent_id,
+                "host_name": host_name,
+                "ip": ip,
+                "features": features,
+            }
+
+            response = session.post(report_url, json=payload, timeout=10)
+
+            if response.status_code == 200:
+                res = response.json()
+                threat = res.get("prediction", "Unknown")
+                action = res.get("action", "N/A")
+                ts = datetime.now().strftime("%H:%M:%S")
+
+                status_icon = "OK" if threat == "Normal" else "!!"
+                print(
+                    f"[{ts}] [{status_icon}] "
+                    f"Threat={threat} | Action={action} | "
+                    f"conns={extras['connections']} pkts={extras['net_packets_delta']} files={extras['recent_files']}"
+                )
+                consecutive_errors = 0
+
+            elif response.status_code == 401:
+                print("[ERROR] Authentication failed. Check agent_key in config.ini")
+                consecutive_errors += 1
+            else:
+                print(f"[ERROR] Server returned {response.status_code}")
+                consecutive_errors += 1
+
+        except requests.exceptions.ConnectionError:
+            ts = datetime.now().strftime("%H:%M:%S")
+            print(f"[{ts}] [WARN] Lost connection to server. Retrying...")
+            consecutive_errors += 1
+            if consecutive_errors >= 5:
+                print("[HEARTBEAT] Too many failures. Waiting for server to come back...")
+                if not wait_for_server(session, report_url):
+                    break
+                consecutive_errors = 0
+                continue
+        except Exception as e:
+            print(f"[ERROR] {e}")
+            consecutive_errors += 1
+
+        if _shutdown:
+            break
+
+        # Exponential backoff on repeated errors (max 60s extra)
+        wait = interval
+        if consecutive_errors > 3:
+            wait = min(interval + (consecutive_errors * 5), interval + 60)
+            print(f"[WARN] {consecutive_errors} errors. Next retry in {wait}s")
+
+        _interruptible_sleep(wait)
+
+    # ── Clean shutdown ──
+    session.close()
+    print("\n" + "=" * 50)
+    print("  Agent stopped cleanly.")
+    print("=" * 50)
+
+
+if __name__ == "__main__":
+    run_agent()

@@ -3,7 +3,7 @@ from extensions import db, socketio
 from models.host import Host
 from models.alert import Alert
 from src.infra import ModelLoader
-from utils.constants import EXPECTED_FEATURE_COUNT
+from utils.constants import EXPECTED_FEATURE_COUNT, FEATURE_NAMES
 from utils.response_orchestrator import InsiderThreatResponseOrchestrator
 
 
@@ -14,7 +14,7 @@ class HostController:
     def process_report(agent_id, host_name, ip, features, activity_type="FILE"):
         """
         Receive 15 features from the agent, run XGBoost prediction, update DB.
-        Returns dict with prediction/probability/action.
+        Returns dict with prediction/probability/action/models.
         """
         if not features or len(features) != EXPECTED_FEATURE_COUNT:
             raise ValueError(
@@ -23,6 +23,7 @@ class HostController:
 
         threat, action = "Normal", "No Action"
         probability = 0.0
+        models_data = {}
         prevention_result = {
             "test_mode": True,
             "activity_type": activity_type,
@@ -32,12 +33,13 @@ class HostController:
             "popup": None,
         }
 
-        # ── AI Prediction (XGBoost primary) ──
+        # ── AI Prediction (XGBoost primary + RandomForest secondary) ──
         if ModelLoader.is_loaded():
             try:
                 result = ModelLoader.predict(features)
                 pred_label = result.get("prediction", "Normal")
                 probability = result.get("probability", 0.0)
+                models_data = result.get("models", {})
 
                 if pred_label == "Attack":
                     threat = "Attack"
@@ -64,7 +66,6 @@ class HostController:
 
         host = Host.query.filter_by(agent_id=agent_id).first()
         if not host:
-            # Fallback: same physical host may come with a regenerated agent_id.
             if ip:
                 host = (
                     Host.query
@@ -97,10 +98,18 @@ class HostController:
                 host_name=host_name, ip=ip,
                 threat_type=threat,
                 action=action, time=now,
+                confidence=probability,
+                severity="Critical" if probability >= 0.9 else ("High" if probability >= 0.7 else "Medium"),
             )
             db.session.add(alert)
 
         db.session.commit()
+
+        # Build feature dict for frontend
+        feature_dict = {}
+        for i, name in enumerate(FEATURE_NAMES):
+            if i < len(features):
+                feature_dict[name] = features[i]
 
         # Emit real-time WebSocket events
         socketio.emit("host_update", host.to_dict())
@@ -120,6 +129,8 @@ class HostController:
             "probability": probability,
             "action": action,
             "prevention": prevention_result,
+            "models": models_data,
+            "features": feature_dict,
         }
 
     @staticmethod

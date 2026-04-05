@@ -58,6 +58,43 @@ def _heartbeat_monitor(app):
             print(f"[HEARTBEAT ERROR] {e}")
 
 
+def _udp_discovery_listener(app):
+    """
+    UDP broadcast listener on port 5001.
+    When an agent sends 'IDS_DISCOVER', we respond with our IP:port.
+    This allows agents to auto-discover the server on any network.
+    """
+    import socket as sock
+    try:
+        s = sock.socket(sock.AF_INET, sock.SOCK_DGRAM)
+        s.setsockopt(sock.SOL_SOCKET, sock.SO_REUSEADDR, 1)
+        s.bind(("0.0.0.0", 5001))
+        s.settimeout(2.0)
+        print("[DISCOVERY] UDP listener on port 5001 — agents can auto-discover this server")
+        while True:
+            try:
+                data, addr = s.recvfrom(1024)
+                msg = data.decode("utf-8", errors="ignore").strip()
+                if msg == "IDS_DISCOVER":
+                    # Get our IP facing the requesting agent
+                    try:
+                        temp = sock.socket(sock.AF_INET, sock.SOCK_DGRAM)
+                        temp.connect((addr[0], 1))
+                        our_ip = temp.getsockname()[0]
+                        temp.close()
+                    except Exception:
+                        our_ip = "0.0.0.0"
+                    response = f"IDS_SERVER:{our_ip}:5000"
+                    s.sendto(response.encode("utf-8"), addr)
+                    print(f"[DISCOVERY] Responded to {addr[0]} → {response}")
+            except sock.timeout:
+                continue
+            except Exception as e:
+                print(f"[DISCOVERY] Error: {e}")
+    except Exception as e:
+        print(f"[DISCOVERY] Could not start: {e}")
+
+
 def _merge_duplicate_agents():
     """
     Merge duplicate registered agent rows that represent the same physical device.
@@ -178,6 +215,20 @@ def _migrate_db(app):
     except Exception as e:
         print(f"[MIGRATE] Warning: {e}")
 
+    # Migrate registered_agents table
+    try:
+        conn = sqlite3.connect(db_path)
+        cursor = conn.cursor()
+        cursor.execute("PRAGMA table_info(registered_agents)")
+        cols = [row[1] for row in cursor.fetchall()]
+        if "hardware_id" not in cols:
+            cursor.execute("ALTER TABLE registered_agents ADD COLUMN hardware_id VARCHAR(128)")
+            print("[MIGRATE] Added 'hardware_id' to registered_agents")
+        conn.commit()
+        conn.close()
+    except Exception as e:
+        print(f"[MIGRATE] registered_agents: {e}")
+
 
 def create_app():
     """Application factory — creates and configures the Flask app."""
@@ -246,6 +297,7 @@ def create_app():
     # ── Create tables + load AI model on startup ──
     with app.app_context():
         from models import Host, Alert, RegisteredAgent  # noqa: F401
+        from models.prediction_log import PredictionLog  # noqa: F401
         os.makedirs(os.path.join(BASE_DIR, "instance"), exist_ok=True)
         db.create_all()
         _merge_duplicate_agents()
@@ -262,6 +314,10 @@ def create_app():
     monitor = threading.Thread(target=_heartbeat_monitor, args=(app,), daemon=True)
     monitor.start()
     print(f"[OK] Heartbeat monitor started (timeout: {HEARTBEAT_TIMEOUT}s)")
+
+    # ── UDP Discovery listener — agents find us automatically ──
+    disc_thread = threading.Thread(target=_udp_discovery_listener, args=(app,), daemon=True)
+    disc_thread.start()
 
     # ── Start network sensor if enabled ──
     if ENABLE_NETWORK_SENSOR:
