@@ -577,9 +577,10 @@ def run_agent():
                 "host_name": host_name,
                 "ip": ip,
                 "features": features,
+                "os_info": f"{platform.system()} {platform.release()} ({platform.machine()})",
             }
 
-            response = session.post(report_url, json=payload, timeout=10)
+            response = session.post(report_url, json=payload, timeout=30)
 
             if response.status_code == 200:
                 res = response.json()
@@ -598,6 +599,25 @@ def run_agent():
             elif response.status_code == 401:
                 print("[ERROR] Authentication failed. Check agent_key in config.ini")
                 consecutive_errors += 1
+            elif response.status_code == 403:
+                print("[WARN] Agent rejected (403). Attempting re-registration...")
+                reg_result = register_with_backend(session, base_url, agent_id, host_name, ip, hardware_id)
+                if reg_result is True:
+                    print("[OK] Re-registered successfully. Resuming...")
+                    consecutive_errors = 0
+                elif reg_result == "pending":
+                    print("[APPROVAL] Waiting for admin approval...")
+                    while not _shutdown:
+                        _interruptible_sleep(10)
+                        reg_result = register_with_backend(session, base_url, agent_id, host_name, ip, hardware_id)
+                        if reg_result is True:
+                            print("[OK] Re-approved! Resuming.")
+                            break
+                        elif reg_result is False:
+                            break
+                    consecutive_errors = 0
+                else:
+                    consecutive_errors += 1
             else:
                 print(f"[ERROR] Server returned {response.status_code}")
                 consecutive_errors += 1
