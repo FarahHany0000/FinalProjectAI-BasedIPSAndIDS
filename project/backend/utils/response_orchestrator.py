@@ -94,17 +94,17 @@ class InsiderThreatResponseOrchestrator:
         prediction: str,
         probability: float,
         host_ip: str = "",
+        features: list = None,
     ) -> Dict[str, Any]:
         """
         Accepts model outcome + activity metadata and returns response action.
-        In LIVE mode with CRITICAL/MEDIUM: executes real firewall blocking.
+        In LIVE mode: sends prevention_commands to the agent for local execution.
         """
         if not cls._initialized:
             raise RuntimeError("Orchestrator not initialized. Call initialize_and_reset() first.")
 
         pred = (prediction or "Normal").strip().lower()
         normalized_activity = cls._normalize_activity(activity_type)
-        dtype_action = cls._type_policy.get(normalized_activity, "Unknown Activity Policy")
 
         if pred != "attack" or probability < cls._thresholds[0]:
             level = "NONE"
@@ -135,11 +135,15 @@ class InsiderThreatResponseOrchestrator:
             return result
 
         level, generic_action = cls._decision_level(probability)
-        action = f"{generic_action} + {dtype_action}"
+
+        # Analyze features to determine specific prevention commands
+        prevention_commands = cls._analyze_and_decide(level, probability, features)
+        action_desc = cls._describe_actions(prevention_commands)
+        action = action_desc
 
         firewall_applied = False
 
-        # LIVE MODE: Execute real OS-level prevention
+        # LIVE MODE: server-side firewall (backup) + agent commands
         if not cls._test_mode and host_ip and level in {"MEDIUM", "CRITICAL"}:
             firewall_applied = cls._apply_host_firewall_block(host_ip, host_name, level)
             if firewall_applied:
@@ -148,7 +152,6 @@ class InsiderThreatResponseOrchestrator:
         mode_label = "TEST" if cls._test_mode else "LIVE"
         response_message = (
             f"[{mode_label}] Threat detected ({level}) on host {host_name} "
-            f"for activity {normalized_activity} "
             f"(prob={probability:.3f}). Response: {action}."
         )
 
@@ -160,6 +163,7 @@ class InsiderThreatResponseOrchestrator:
                 "level": level,
                 "firewall_applied": firewall_applied,
                 "host_ip": host_ip,
+                "prevention_commands": prevention_commands,
                 "updated_at": datetime.datetime.now().isoformat(),
             }
 
@@ -175,6 +179,7 @@ class InsiderThreatResponseOrchestrator:
                 "action_taken": action,
                 "test_mode": cls._test_mode,
                 "firewall_applied": firewall_applied,
+                "prevention_commands": prevention_commands,
                 "response_message": response_message,
             }
         )
@@ -187,7 +192,89 @@ class InsiderThreatResponseOrchestrator:
             response_message=response_message,
             popup=True,
             firewall_applied=firewall_applied,
+            prevention_commands=prevention_commands,
         )
+
+    # ── Smart Prevention Analysis ──
+
+    @classmethod
+    def _analyze_and_decide(cls, level: str, probability: float, features: list = None) -> List[Dict[str, Any]]:
+        """
+        Analyze features to decide which prevention commands to send to the agent.
+        Returns a list of command dicts that the agent will execute.
+        """
+        commands = []
+
+        if features and len(features) >= 15:
+            # Feature indices (CERT r4.2 order):
+            # 0: total_logons, 1: avg_logon_hour, 2: std_logon_hour
+            # 3: weekend_logons, 4: after_hours_logons, 5: unique_pcs_logon
+            # 6: total_device_activities, 7: unique_pcs_device, 8: avg_device_hour
+            # 9: after_hours_device
+            # 10: total_file_activities, 11: unique_files, 12: unique_pcs_file
+            # 13: avg_file_hour, 14: after_hours_files
+
+            after_hours_logons = features[4]
+            total_device = features[6]
+            after_hours_device = features[9]
+            total_files = features[10]
+            unique_files = features[11]
+            after_hours_files = features[14]
+
+            # USB / Device exfiltration detected
+            if total_device > 100 and after_hours_device > 50:
+                commands.append({
+                    "type": "disable_usb",
+                    "reason": f"Suspicious device activity ({int(total_device)} ops, {int(after_hours_device)} after-hours)",
+                })
+
+            # Mass file access / data theft
+            if total_files > 5000 or unique_files > 3000:
+                commands.append({
+                    "type": "kill_suspicious_processes",
+                    "reason": f"Abnormal file activity ({int(total_files)} files, {int(unique_files)} unique)",
+                })
+
+            # After-hours suspicious activity
+            if after_hours_logons > 3 or after_hours_files > 1000:
+                commands.append({
+                    "type": "lock_screen",
+                    "reason": f"Suspicious after-hours activity (logons={int(after_hours_logons)}, files={int(after_hours_files)})",
+                })
+
+        # Level-based defaults (if no feature-specific commands)
+        if level == "CRITICAL" and not commands:
+            commands.append({"type": "lock_screen", "reason": "Critical threat level — force re-authentication"})
+            commands.append({"type": "kill_suspicious_processes", "reason": "Critical threat — terminate unknown processes"})
+        elif level == "MEDIUM" and not commands:
+            commands.append({"type": "lock_screen", "reason": "Medium threat level — verify user identity"})
+
+        # CRITICAL always adds lock_screen if not already there
+        if level == "CRITICAL":
+            cmd_types = [c["type"] for c in commands]
+            if "lock_screen" not in cmd_types:
+                commands.insert(0, {"type": "lock_screen", "reason": "Critical threat — force re-authentication"})
+
+        # Always log/alert
+        commands.append({"type": "alert_user", "reason": "Threat detected — notifying user"})
+
+        return commands
+
+    @classmethod
+    def _describe_actions(cls, commands: List[Dict[str, Any]]) -> str:
+        """Human-readable summary of prevention commands."""
+        action_names = {
+            "lock_screen": "Lock Screen",
+            "kill_suspicious_processes": "Kill Suspicious Processes",
+            "disable_usb": "Disable USB Storage",
+            "alert_user": "Alert User",
+        }
+        parts = []
+        for cmd in commands:
+            name = action_names.get(cmd["type"], cmd["type"])
+            if name not in parts:
+                parts.append(name)
+        return " + ".join(parts) if parts else "Monitor Only"
 
     # ── Firewall Management ──
 
@@ -435,6 +522,7 @@ class InsiderThreatResponseOrchestrator:
         response_message: str,
         popup: bool,
         firewall_applied: bool = False,
+        prevention_commands: list = None,
     ) -> Dict[str, Any]:
         popup_payload = None
         if popup:
@@ -453,6 +541,7 @@ class InsiderThreatResponseOrchestrator:
             "response_message": response_message,
             "popup": popup_payload,
             "firewall_applied": firewall_applied,
+            "prevention_commands": prevention_commands or [],
         }
 
     @classmethod

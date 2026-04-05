@@ -28,6 +28,8 @@ import configparser
 import hashlib
 import hmac
 import json
+import ctypes
+import subprocess
 import psutil
 from datetime import datetime
 
@@ -338,7 +340,144 @@ def _net_snapshot():
     }
 
 
-def collect_features(window_seconds):
+# ─────────────────────────────────────────────────────────
+# Prevention Actions — Executed locally on the host
+# ─────────────────────────────────────────────────────────
+
+# Whitelist of known safe system processes (never kill these)
+_SAFE_PROCESSES = {
+    "system", "smss.exe", "csrss.exe", "wininit.exe", "services.exe",
+    "lsass.exe", "svchost.exe", "explorer.exe", "dwm.exe", "conhost.exe",
+    "taskhostw.exe", "runtimebroker.exe", "searchhost.exe", "startmenuexperiencehost.exe",
+    "shellexperiencehost.exe", "sihost.exe", "fontdrvhost.exe", "winlogon.exe",
+    "ctfmon.exe", "dllhost.exe", "spoolsv.exe", "audiodg.exe",
+    "python.exe", "pythonw.exe", "python3.exe",  # Don't kill ourselves
+    "code.exe", "node.exe",  # VS Code
+}
+
+
+def execute_prevention_commands(commands, test_mode=True):
+    """
+    Execute prevention commands received from the backend.
+    In test_mode: only logs what WOULD happen.
+    In live mode: actually executes the actions.
+    """
+    if not commands:
+        return
+
+    ts = datetime.now().strftime("%H:%M:%S")
+    mode = "TEST" if test_mode else "LIVE"
+
+    for cmd in commands:
+        cmd_type = cmd.get("type", "")
+        reason = cmd.get("reason", "")
+
+        if cmd_type == "lock_screen":
+            print(f"[{ts}] [PREVENT-{mode}] LOCK SCREEN — {reason}")
+            if not test_mode:
+                _do_lock_screen()
+
+        elif cmd_type == "kill_suspicious_processes":
+            print(f"[{ts}] [PREVENT-{mode}] KILL SUSPICIOUS PROCESSES — {reason}")
+            if not test_mode:
+                _do_kill_suspicious()
+
+        elif cmd_type == "disable_usb":
+            print(f"[{ts}] [PREVENT-{mode}] DISABLE USB STORAGE — {reason}")
+            if not test_mode:
+                _do_disable_usb()
+
+        elif cmd_type == "alert_user":
+            print(f"[{ts}] [PREVENT-{mode}] ALERT — {reason}")
+            if not test_mode:
+                _do_alert_user(reason)
+
+        else:
+            print(f"[{ts}] [PREVENT-{mode}] UNKNOWN COMMAND: {cmd_type}")
+
+
+def _do_lock_screen():
+    """Lock the Windows workstation (Win+L equivalent)."""
+    try:
+        if platform.system() == "Windows":
+            ctypes.windll.user32.LockWorkStation()
+            print("[PREVENT] Screen locked successfully")
+        else:
+            # Linux: use loginctl or xdg-screensaver
+            subprocess.run(["loginctl", "lock-session"], timeout=5,
+                           capture_output=True, text=True)
+            print("[PREVENT] Screen locked (Linux)")
+    except Exception as e:
+        print(f"[PREVENT] Failed to lock screen: {e}")
+
+
+def _do_kill_suspicious():
+    """Kill processes that are not in the safe whitelist."""
+    killed = []
+    my_pid = os.getpid()
+    my_parent = psutil.Process(my_pid).ppid()
+
+    for proc in psutil.process_iter(["pid", "name", "username"]):
+        try:
+            pname = (proc.info["name"] or "").lower()
+            pid = proc.info["pid"]
+
+            # Never kill system, ourselves, or whitelisted processes
+            if pid in (0, 4, my_pid, my_parent):
+                continue
+            if pname in _SAFE_PROCESSES:
+                continue
+
+            # Kill user-level non-system processes that are unusual
+            proc.kill()
+            killed.append(f"{pname} (PID {pid})")
+        except (psutil.NoSuchProcess, psutil.AccessDenied):
+            continue
+        except Exception:
+            continue
+
+    if killed:
+        print(f"[PREVENT] Killed {len(killed)} suspicious processes: {', '.join(killed[:5])}")
+    else:
+        print("[PREVENT] No suspicious processes found to kill")
+
+
+def _do_disable_usb():
+    """Disable USB storage devices via Windows registry."""
+    try:
+        if platform.system() == "Windows":
+            # Set USBSTOR Start value to 4 (disabled)
+            result = subprocess.run(
+                ["reg", "add", r"HKLM\SYSTEM\CurrentControlSet\Services\USBSTOR",
+                 "/v", "Start", "/t", "REG_DWORD", "/d", "4", "/f"],
+                capture_output=True, text=True, timeout=10
+            )
+            if result.returncode == 0:
+                print("[PREVENT] USB storage disabled via registry")
+            else:
+                print(f"[PREVENT] Failed to disable USB: {result.stderr or result.stdout}")
+        else:
+            print("[PREVENT] USB disable not implemented for this OS")
+    except Exception as e:
+        print(f"[PREVENT] Failed to disable USB: {e}")
+
+
+def _do_alert_user(reason):
+    """Show a warning message box to the user."""
+    try:
+        if platform.system() == "Windows":
+            # Non-blocking message box using ctypes
+            MB_OK = 0x00000000
+            MB_ICONWARNING = 0x00000030
+            MB_TOPMOST = 0x00040000
+            ctypes.windll.user32.MessageBoxW(
+                0,
+                f"Security Alert!\n\n{reason}\n\nYour system activity has been flagged as suspicious.\nPlease contact your IT administrator.",
+                "IDS/IPS — Threat Detected",
+                MB_OK | MB_ICONWARNING | MB_TOPMOST
+            )
+    except Exception as e:
+        print(f"[PREVENT] Failed to show alert: {e}")
     """
     Collect 15 CERT features matching the proven Host LIVE Test.py approach.
     Uses network snapshots + recent file counting (NOT raw disk I/O).
@@ -594,6 +733,15 @@ def run_agent():
                     f"Threat={threat} | Action={action} | "
                     f"conns={extras['connections']} pkts={extras['net_packets_delta']} files={extras['recent_files']}"
                 )
+
+                # Execute prevention commands from backend
+                prevention = res.get("prevention", {})
+                prevention_cmds = prevention.get("prevention_commands", [])
+                is_test_mode = prevention.get("test_mode", True)
+                if prevention_cmds:
+                    print(f"[{ts}] [PREVENTION] Received {len(prevention_cmds)} commands (mode={'TEST' if is_test_mode else 'LIVE'})")
+                    execute_prevention_commands(prevention_cmds, test_mode=is_test_mode)
+
                 consecutive_errors = 0
 
             elif response.status_code == 401:

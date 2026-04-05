@@ -57,6 +57,7 @@ class HostController:
             prediction=threat,
             probability=probability,
             host_ip=ip or "",
+            features=features,
         )
 
         if threat != "Normal":
