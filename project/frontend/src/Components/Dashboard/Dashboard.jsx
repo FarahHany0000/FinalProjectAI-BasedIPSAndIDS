@@ -473,6 +473,54 @@ export default function Dashboard() {
           </div>
         )}
 
+        {/* Recent Alerts Table */}
+        <div className="panel">
+          <h3>Recent Alerts</h3>
+          <table>
+            <thead>
+              <tr>
+                <th>Host Name</th>
+                <th>Threat</th>
+                <th>Action Taken</th>
+                <th>Time</th>
+              </tr>
+            </thead>
+            <tbody>
+              {alerts.length > 0 ? alerts.slice(0, 10).map((alert, idx) => (
+                <tr key={idx}>
+                  <td>{alert.host_name}</td>
+                  <td style={{ color: "#ef4444", fontWeight: "bold" }}>{alert.threat}</td>
+                  <td style={{ color: "#f97316", fontWeight: "bold" }}>{alert.action}</td>
+                  <td>{alert.time ? new Date(alert.time).toLocaleString() : "N/A"}</td>
+                </tr>
+              )) : (
+                <tr><td colSpan="4" className="empty-logs">No alerts detected. System is secure.</td></tr>
+              )}
+            </tbody>
+          </table>
+        </div>
+
+        {/* Model & Network Sensor Status */}
+        <div style={{ display: "flex", gap: "20px", marginBottom: "20px" }}>
+          <div className="panel" style={{ flex: 1, display: "flex", alignItems: "center", gap: "12px" }}>
+            <span style={{ fontSize: "1.2rem" }}>
+              {stats?.model_loaded ? "🟢" : "🔴"}
+            </span>
+            <span>
+              AI Model: <strong>{stats?.model_loaded ? "XGBoost — Loaded & Active" : "Not Loaded"}</strong>
+            </span>
+          </div>
+
+          <div className="panel" style={{ flex: 1, display: "flex", alignItems: "center", gap: "12px" }}>
+            <span style={{ fontSize: "1.2rem" }}>
+              {stats?.network_sensor_enabled ? "🟢" : "🔴"}
+            </span>
+            <span>
+              Network IDS (XGBoost): <strong>{stats?.network_sensor_enabled ? "Active — Monitoring traffic on VMnet1" : "Disabled"}</strong>
+            </span>
+          </div>
+        </div>
+
       </div>
     </div>
   );

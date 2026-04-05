@@ -1,6 +1,14 @@
 flask
 flask-cors
 flask-sqlalchemy
+flask-socketio
 numpy
 joblib
 tensorflow
+xgboost
+scikit-learn
+scapy
+pandas
+psutil
+python-socketio
+python-engineio

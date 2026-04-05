@@ -8,6 +8,7 @@ import Host from './Components/Host/Host';
 import HostLogs from './Components/HostLogs/HostLogs';
 import Agents from './Components/Agents/Agents';
 import Network from './Components/Network/Network';
+import Controls from './Components/Controls/Controls';
 import { SystemProvider } from './context/SystemContext';
 
 function App() {
@@ -23,9 +24,7 @@ function App() {
         <Route path="/alert" element={<ProtectedRoute><Alertpage /></ProtectedRoute>} />
         <Route path="/agents" element={<ProtectedRoute><Agents /></ProtectedRoute>} />
         <Route path="/network" element={<ProtectedRoute><Network /></ProtectedRoute>} />
-        <Route path="/control" element={<ProtectedRoute><Dashboard /></ProtectedRoute>} />
-        <Route path="/control/prevention" element={<ProtectedRoute><Dashboard /></ProtectedRoute>} />
-        <Route path="/control/ai" element={<ProtectedRoute><Dashboard /></ProtectedRoute>} />
+        <Route path="/controls" element={<ProtectedRoute><Controls /></ProtectedRoute>} />
 
         <Route path='*' element={<NotFound />} />
       </Routes>

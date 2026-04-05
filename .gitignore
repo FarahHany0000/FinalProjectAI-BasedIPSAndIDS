@@ -1,17 +1,59 @@
+# Python
 __pycache__/
 *.pyc
-.env
-*.db
-instance/
+*.pyo
+*.egg-info/
+*.egg
+
+# Virtual environments
 venv/
 env/
+.venv/
+
+# Environment variables
+.env
+.env.local
+
+# Database
+*.db
+instance/
+
+# Agent identity (unique per machine)
 .agent_id
+
+# Node.js
 node_modules/
 dist/
+
+# Training data (large files - use project/training/ locally)
+*.pcap
+*.csv
+!project/training/**/*.csv
+
+# Logs
+*.log
+
+# AI model files (large binaries)
+*.pkl
+*.h5
+*.json.bak
+
+# Runtime state
+prevention_runtime_state.json
+
+# Simulation / testing artifacts
 *attack_simulation*
 *simulation*
-*.pcap
-*.log
 attacks_log.csv
 sim_results/
 project/backend/archive/
+
+# OS files
+Thumbs.db
+.DS_Store
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo

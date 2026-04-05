@@ -3,6 +3,7 @@ import platform
 from flask import Blueprint, request, jsonify
 from middleware.auth import require_agent_key, require_registered_agent, validate_json
 from controllers.host_controller import HostController
+from controllers.network_alert_controller import NetworkAlertController
 from models.registered_agent import RegisteredAgent
 from extensions import db
 
@@ -133,3 +134,35 @@ def host_report():
     except Exception as e:
         print(f"[CRITICAL] agent_report error: {e}")
         return jsonify({"error": "Internal Error"}), 500
+
+
+@agent_bp.route("/api/agent/network-alert", methods=["POST"])
+@require_agent_key
+@validate_json("source", "attack_type", "confidence")
+def network_alert():
+    """
+    Receive network attack detection from the network sensor.
+    No authentication required beyond agent key (network sensor is internal).
+
+    Expected payload:
+    {
+        "source": "NetworkSensor-1",
+        "timestamp": "2024-04-03 12:34:56",
+        "attack_type": "PortScan|SSHBrute|FTPBrute|ARPSpoof|SYNFlood",
+        "confidence": 0.0-1.0,
+        "n_packets": 10,
+        "window_id": 123
+    }
+    """
+    try:
+        data = request.get_json()
+        result = NetworkAlertController.process_network_detection(data)
+
+        if result["status"] == "success":
+            return jsonify(result), 201
+        else:
+            return jsonify(result), 400
+
+    except Exception as e:
+        print(f"[NETWORK ALERT] Error: {e}")
+        return jsonify({"status": "error", "message": str(e)}), 500

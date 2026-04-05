@@ -3,13 +3,18 @@ import threading
 import datetime
 from flask import Flask, jsonify
 from extensions import db, cors, socketio
-from utils.model_loader import ModelLoader
+from src.infra import ModelLoader
 from utils.response_orchestrator import InsiderThreatResponseOrchestrator
 
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 
 # Default: if no report in 30 seconds, host is considered offline
 HEARTBEAT_TIMEOUT = int(os.environ.get("HEARTBEAT_TIMEOUT", "30"))
+
+# Enable network sensor (default: True)
+ENABLE_NETWORK_SENSOR = os.environ.get("ENABLE_NETWORK_SENSOR", "true").lower() == "true"
+
+_network_agent = None  # Global reference to network sensor agent
 
 
 def _heartbeat_monitor(app):
@@ -103,6 +108,77 @@ def _merge_duplicate_hosts():
         print(f"[CLEANUP] Removed {len(duplicates)} duplicate host row(s).")
 
 
+def _start_network_sensor(app):
+    """
+    Start the network IDS sensor in a background thread.
+    The sensor sniffs packets and sends alerts to /api/agent/network-alert.
+    """
+    global _network_agent
+
+    def _sensor_thread():
+        try:
+            import sys
+            import pathlib
+            sys.path.insert(0, str(pathlib.Path(__file__).resolve().parent.parent))
+
+            from agents.network_sensor.network_sensor import NetworkSensorAgent
+
+            # Load the network model
+            net_model = ModelLoader.load_network_model()
+            if not net_model:
+                print("[NETWORK SENSOR] Failed to load network model, skipping")
+                return
+
+            # BPF filter to exclude noisy non-attack traffic
+            bpf = "not port 53 and not port 1900 and not port 5353 and not port 57621 and not port 137 and not port 138 and not port 5000 and not port 67 and not port 68 and not port 5355 and not port 547 and not host 192.168.253.254 and not dst net 224.0.0.0/4"
+
+            _network_agent = NetworkSensorAgent(
+                model_engine=net_model,
+                hostname="NetworkSensor-1",
+                backend_url="http://127.0.0.1:5000/api/agent/network-alert",
+                agent_key=app.config.get("AGENT_KEY", "changeme"),
+                bpf_filter=bpf,
+            )
+            _network_agent.run_loop()
+
+        except Exception as e:
+            print(f"[NETWORK SENSOR ERROR] {e}")
+
+    sensor_daemon = threading.Thread(target=_sensor_thread, daemon=True, name="NetworkSensor")
+    sensor_daemon.start()
+    print("[OK] Network sensor thread started (running in background)")
+
+
+def _migrate_db(app):
+    """Add missing columns to existing SQLite tables."""
+    import sqlite3
+    db_path = app.config["SQLALCHEMY_DATABASE_URI"].replace("sqlite:///", "")
+    if not os.path.exists(db_path):
+        return
+    try:
+        conn = sqlite3.connect(db_path)
+        cursor = conn.cursor()
+        cursor.execute("PRAGMA table_info(alerts)")
+        existing_cols = {row[1] for row in cursor.fetchall()}
+
+        new_cols = {
+            "is_blocked": "BOOLEAN DEFAULT 0",
+            "src_ip": "VARCHAR(50) DEFAULT ''",
+            "dst_ip": "VARCHAR(50) DEFAULT ''",
+            "src_port": "INTEGER DEFAULT 0",
+            "dst_port": "INTEGER DEFAULT 0",
+        }
+        for col_name, col_type in new_cols.items():
+            if col_name not in existing_cols:
+                cursor.execute(f"ALTER TABLE alerts ADD COLUMN {col_name} {col_type}")
+                print(f"[MIGRATE] Added column alerts.{col_name}")
+
+        conn.commit()
+        conn.close()
+    except Exception as e:
+        print(f"[MIGRATE] Warning: {e}")
+
+
 def create_app():
     """Application factory — creates and configures the Flask app."""
     app = Flask(__name__)
@@ -131,11 +207,13 @@ def create_app():
     from routes.agent import agent_bp
     from routes.dashboard import dashboard_bp
     from routes.prevention import prevention_bp
+    from src.api import api_bp
 
     app.register_blueprint(health_bp)
     app.register_blueprint(agent_bp)
     app.register_blueprint(dashboard_bp)
     app.register_blueprint(prevention_bp)
+    app.register_blueprint(api_bp)
 
     # ── Root page — quick status overview ──
     @app.route("/")
@@ -144,8 +222,9 @@ def create_app():
         from models.registered_agent import RegisteredAgent
         from models.alert import Alert
         return jsonify({
-            "service": "AI-Based IDS Backend",
+            "service": "AI-Based IDS/IPS Backend",
             "model_loaded": ModelLoader.is_loaded(),
+            "network_sensor_enabled": ENABLE_NETWORK_SENSOR,
             "total_hosts": Host.query.count(),
             "online_hosts": Host.query.filter_by(status="Online").count(),
             "registered_agents": RegisteredAgent.query.count(),
@@ -154,6 +233,7 @@ def create_app():
                 "health": "/api/agent/health",
                 "register": "/api/agent/register  [POST]",
                 "host_report": "/api/agent/host-report  [POST]",
+                "network_alert": "/api/agent/network-alert  [POST]",
                 "stats": "/api/dashboard/stats",
                 "alerts": "/api/dashboard/alerts",
                 "agents": "/api/agents",
@@ -170,6 +250,11 @@ def create_app():
         db.create_all()
         _merge_duplicate_agents()
         _merge_duplicate_hosts()
+
+        # Migrate: add new columns if they don't exist (SQLite ALTER TABLE)
+        _migrate_db(app)
+
+
         ModelLoader.load()
         InsiderThreatResponseOrchestrator.initialize_and_reset(app.config)
 
@@ -178,6 +263,10 @@ def create_app():
     monitor.start()
     print(f"[OK] Heartbeat monitor started (timeout: {HEARTBEAT_TIMEOUT}s)")
 
+    # ── Start network sensor if enabled ──
+    if ENABLE_NETWORK_SENSOR:
+        _start_network_sensor(app)
+
     return app
 
 
@@ -185,13 +274,14 @@ if __name__ == "__main__":
     app = create_app()
 
     agent_key = app.config["AGENT_KEY"]
-    print("=" * 50)
-    print("  IDS Backend Server")
-    print(f"  Model loaded: {ModelLoader.is_loaded()}")
-    print(f"  Agent key:    {'(default)' if agent_key == 'changeme' else '(configured)'}")
-    print(f"  Test mode:    {app.config['TEST_MODE']}")
-    print(f"  Heartbeat:    {HEARTBEAT_TIMEOUT}s timeout")
-    print(f"  Listening on: 0.0.0.0:5000")
-    print("=" * 50)
+    print("=" * 60)
+    print("  AI-Based IDS/IPS Backend Server")
+    print(f"  Model loaded:           {ModelLoader.is_loaded()}")
+    print(f"  Network sensor:         {'ENABLED' if ENABLE_NETWORK_SENSOR else 'DISABLED'}")
+    print(f"  Agent key:              {'(default)' if agent_key == 'changeme' else '(configured)'}")
+    print(f"  Test mode:              {app.config['TEST_MODE']}")
+    print(f"  Heartbeat timeout:      {HEARTBEAT_TIMEOUT}s")
+    print(f"  Listening on:           0.0.0.0:5000")
+    print("=" * 60)
 
     socketio.run(app, host="0.0.0.0", port=5000, allow_unsafe_werkzeug=True)

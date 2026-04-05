@@ -23,6 +23,7 @@ class AlertController:
     def get_dashboard_stats():
         """Aggregate stats for the frontend dashboard."""
         from models.registered_agent import RegisteredAgent
+        import os
 
         total_hosts = Host.query.count()
         online_hosts = Host.query.filter_by(status="Online").count()
@@ -43,7 +44,10 @@ class AlertController:
         registered_agents = len(unique_agents)
         online_agents = sum(1 for a in unique_agents if a.status == "Online")
 
-        from utils.model_loader import ModelLoader
+        from src.infra import ModelLoader
+
+        # Check if network sensor is enabled
+        network_sensor_enabled = os.environ.get("ENABLE_NETWORK_SENSOR", "true").lower() == "true"
 
         return {
             "total_hosts": total_hosts,
@@ -54,4 +58,5 @@ class AlertController:
             "registered_agents": registered_agents,
             "online_agents": online_agents,
             "model_loaded": ModelLoader.is_loaded(),
+            "network_sensor_enabled": network_sensor_enabled,
         }
