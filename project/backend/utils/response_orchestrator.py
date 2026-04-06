@@ -53,14 +53,57 @@ class InsiderThreatResponseOrchestrator:
         cls._blocked_hosts = {}
         cls._initialized = True
 
+        # Auto-cleanup: remove ALL previous firewall rules on startup
+        cls._cleanup_on_startup()
+
         cls._write_log(
             {
                 "event": "initialize_and_reset",
-                "message": "Prevention state reset on startup.",
+                "message": "Prevention state reset on startup. All previous rules cleaned.",
                 "test_mode": cls._test_mode,
             }
         )
         print(f"[PREVENTION] initialize_and_reset() complete | TEST_MODE={cls._test_mode}")
+
+    @classmethod
+    def _cleanup_on_startup(cls) -> None:
+        """Remove ALL prevention artifacts from previous runs."""
+        print("[PREVENTION] Cleaning up previous prevention rules...")
+
+        # 1. Remove host firewall rules (IPS_HOST_BLOCK_*)
+        host_removed = 0
+        try:
+            result = subprocess.run(
+                ["netsh", "advfirewall", "firewall", "show", "rule", "name=all"],
+                capture_output=True, text=True, timeout=15
+            )
+            for line in result.stdout.split("\n"):
+                if cls.RULE_PREFIX in line or "IDS_BLOCK_" in line:
+                    rule_name = line.split(":")[-1].strip()
+                    subprocess.run(
+                        ["netsh", "advfirewall", "firewall", "delete", "rule",
+                         f"name={rule_name}"],
+                        capture_output=True, text=True, timeout=10
+                    )
+                    host_removed += 1
+        except Exception as e:
+            print(f"[PREVENTION] Firewall cleanup error: {e}")
+
+        # 2. Re-enable USB storage (undo disable_usb)
+        try:
+            if os.name == "nt":
+                subprocess.run(
+                    ["reg", "add", r"HKLM\SYSTEM\CurrentControlSet\Services\USBSTOR",
+                     "/v", "Start", "/t", "REG_DWORD", "/d", "3", "/f"],
+                    capture_output=True, text=True, timeout=10
+                )
+        except Exception:
+            pass
+
+        if host_removed > 0:
+            print(f"[PREVENTION] Removed {host_removed} old firewall rules")
+        else:
+            print("[PREVENTION] No old rules found — clean start")
 
     @classmethod
     def update_thresholds(cls, *, low: float, medium: float, critical: float) -> Dict[str, float]:
