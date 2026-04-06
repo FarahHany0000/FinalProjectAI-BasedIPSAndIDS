@@ -16,6 +16,7 @@ _runtime_config = {
     "threshold": 0.70,
     "classification_threshold": 0.50,
     "prevention_enabled": True,
+    "host_prevention_enabled": True,
     "blocked_ips": [],
     "display_mode": "full",      # "full" = binary+classification, "binary" = binary only
 }

@@ -66,6 +66,16 @@ class InsiderThreatResponseOrchestrator:
         print(f"[PREVENTION] initialize_and_reset() complete | TEST_MODE={cls._test_mode}")
 
     @classmethod
+    def set_test_mode(cls, enabled: bool) -> None:
+        """Toggle test mode on/off. When test_mode=True, actions are logged only."""
+        cls._test_mode = enabled
+        print(f"[PREVENTION] Test mode set to {enabled}")
+
+    @classmethod
+    def is_test_mode(cls) -> bool:
+        return cls._test_mode
+
+    @classmethod
     def _cleanup_on_startup(cls) -> None:
         """Remove ALL prevention artifacts from previous runs."""
         print("[PREVENTION] Cleaning up previous prevention rules...")

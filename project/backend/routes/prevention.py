@@ -47,7 +47,7 @@ def prevention_mode():
     if test_mode is None:
         return jsonify({"error": "test_mode required (true/false)"}), 400
 
-    InsiderThreatResponseOrchestrator._test_mode = bool(test_mode)
+    InsiderThreatResponseOrchestrator.set_test_mode(bool(test_mode))
     InsiderThreatResponseOrchestrator._write_log({
         "event": "mode_change",
         "test_mode": bool(test_mode),

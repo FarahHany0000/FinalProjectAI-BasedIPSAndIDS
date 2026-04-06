@@ -262,7 +262,7 @@ def create_app():
     app.config["SECRET_KEY"] = os.environ.get("SECRET_KEY", "ids-secret-key")
     app.config["AGENT_KEY"] = os.environ.get("AGENT_KEY", "changeme")
     app.config["HEARTBEAT_TIMEOUT"] = HEARTBEAT_TIMEOUT
-    app.config["TEST_MODE"] = os.environ.get("TEST_MODE", "true")
+    app.config["TEST_MODE"] = os.environ.get("TEST_MODE", "false")
     app.config["PREVENTION_LOG_PATH"] = os.environ.get(
         "PREVENTION_LOG_PATH",
         os.path.join(BASE_DIR, "instance", "prevention_actions.log"),
