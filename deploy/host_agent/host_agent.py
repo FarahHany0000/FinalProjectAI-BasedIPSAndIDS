@@ -780,13 +780,27 @@ def run_agent():
                     f"conns={extras['connections']} pkts={extras['net_packets_delta']} files={extras['recent_files']}"
                 )
 
-                # Execute prevention commands from backend
+                # Execute prevention commands from response (direct)
                 prevention = res.get("prevention", {})
                 prevention_cmds = prevention.get("prevention_commands", [])
                 is_test_mode = prevention.get("test_mode", True)
                 if prevention_cmds:
                     print(f"[{ts}] [PREVENTION] Received {len(prevention_cmds)} commands (mode={'TEST' if is_test_mode else 'LIVE'})")
                     execute_prevention_commands(prevention_cmds, test_mode=is_test_mode)
+
+                # Also poll for queued commands (from attack simulation or other sources)
+                try:
+                    cmd_url = f"{base_url}/api/agent/pending-commands"
+                    cmd_resp = session.post(cmd_url, json={"host_name": host_name}, timeout=5)
+                    if cmd_resp.status_code == 200:
+                        cmd_data = cmd_resp.json()
+                        queued_cmds = cmd_data.get("commands", [])
+                        cmd_test_mode = cmd_data.get("test_mode", True)
+                        if queued_cmds:
+                            print(f"[{ts}] [PREVENTION] Queued {len(queued_cmds)} commands (mode={'TEST' if cmd_test_mode else 'LIVE'})")
+                            execute_prevention_commands(queued_cmds, test_mode=cmd_test_mode)
+                except Exception:
+                    pass  # Non-critical — don't break the main loop
 
                 consecutive_errors = 0
 

@@ -210,6 +210,27 @@ def host_report():
         return jsonify({"error": "Internal Error"}), 500
 
 
+@agent_bp.route("/api/agent/pending-commands", methods=["POST"])
+@require_agent_key
+def pending_commands():
+    """Agent polls this to get prevention commands queued by the backend."""
+    from utils.response_orchestrator import InsiderThreatResponseOrchestrator
+
+    data = request.get_json(silent=True) or {}
+    host_name = data.get("host_name", "")
+    if not host_name:
+        return jsonify({"error": "host_name required"}), 400
+
+    commands = InsiderThreatResponseOrchestrator.pop_commands(host_name)
+    test_mode = InsiderThreatResponseOrchestrator.is_test_mode()
+
+    return jsonify({
+        "commands": commands,
+        "test_mode": test_mode,
+        "count": len(commands),
+    })
+
+
 @agent_bp.route("/api/agent/network-alert", methods=["POST"])
 @require_agent_key
 @validate_json("source", "attack_type", "confidence")

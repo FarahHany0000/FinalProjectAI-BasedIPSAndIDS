@@ -26,6 +26,7 @@ class InsiderThreatResponseOrchestrator:
     _log_path: str = ""
     _active_constraints: Dict[str, Dict[str, Any]] = {}
     _blocked_hosts: Dict[str, Dict[str, Any]] = {}
+    _pending_commands: Dict[str, List[Dict[str, Any]]] = {}  # host_name -> [commands]
 
     _type_policy = {
         "EMAIL": "Quarantine Action",
@@ -74,6 +75,28 @@ class InsiderThreatResponseOrchestrator:
     @classmethod
     def is_test_mode(cls) -> bool:
         return cls._test_mode
+
+    @classmethod
+    def queue_commands(cls, host_name: str, commands: List[Dict[str, Any]]) -> None:
+        """Queue prevention commands for a host. Agent will pick them up on next poll."""
+        if not commands:
+            return
+        if host_name not in cls._pending_commands:
+            cls._pending_commands[host_name] = []
+        cls._pending_commands[host_name].extend(commands)
+        print(f"[PREVENTION] Queued {len(commands)} commands for {host_name}")
+
+    @classmethod
+    def pop_commands(cls, host_name: str) -> List[Dict[str, Any]]:
+        """Pop all pending commands for a host (agent calls this to get its orders)."""
+        commands = cls._pending_commands.pop(host_name, [])
+        if commands:
+            print(f"[PREVENTION] Delivering {len(commands)} commands to {host_name}")
+        return commands
+
+    @classmethod
+    def get_pending_count(cls, host_name: str) -> int:
+        return len(cls._pending_commands.get(host_name, []))
 
     @classmethod
     def _cleanup_on_startup(cls) -> None:
@@ -223,6 +246,10 @@ class InsiderThreatResponseOrchestrator:
                 "prevention_commands": prevention_commands,
                 "updated_at": datetime.datetime.now().isoformat(),
             }
+
+        # Queue commands for the agent to pick up (even if this request came from simulation)
+        if prevention_commands:
+            cls.queue_commands(host_name, prevention_commands)
 
         cls._write_log(
             {
