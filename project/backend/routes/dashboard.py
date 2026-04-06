@@ -406,8 +406,8 @@ def _apply_firewall_block(ip: str):
     """Add Windows Firewall rules to fully block an IP (inbound + outbound)."""
     import subprocess
     if ip.startswith("127.") or ip == "::1" or ip == "localhost":
-        print(f"[PREVENTION] Skipping localhost IP {ip}")
-        return
+        print(f"[PREVENTION] Skipping localhost IP {ip} — firewall can't block loopback")
+        return False
     rule_name_in = f"IDS_BLOCK_{ip.replace('.', '_')}_IN"
     rule_name_out = f"IDS_BLOCK_{ip.replace('.', '_')}_OUT"
     try:
@@ -424,15 +424,18 @@ def _apply_firewall_block(ip: str):
             capture_output=True, text=True, timeout=10
         )
         if r1.returncode == 0 or r2.returncode == 0:
-            print(f"[PREVENTION] Blocked IP: {ip} (in+out)")
+            print(f"[PREVENTION] ✓ Blocked IP: {ip} (in+out) — ping/traffic will be blocked")
+            return True
         else:
             err = (r1.stderr or r1.stdout or "").strip()
             if "elevation" in err.lower():
-                print(f"[PREVENTION] ⚠ Need Administrator for firewall!")
+                print(f"[PREVENTION] ⚠ Need Administrator for firewall! Run backend as admin.")
             else:
                 print(f"[PREVENTION] Failed to block {ip}: {err}")
+            return False
     except Exception as e:
         print(f"[PREVENTION] Failed to block {ip}: {e}")
+        return False
 
 
 def _remove_firewall_block(ip: str):

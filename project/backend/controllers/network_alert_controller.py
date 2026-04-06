@@ -40,7 +40,14 @@ class NetworkAlertController:
     # Rate limiting: track alerts per IP { ip: [timestamp, timestamp, ...] }
     _ip_alert_history = {}
     RATE_LIMIT_WINDOW = 60    # seconds
-    RATE_LIMIT_MAX = 5        # max alerts before auto-block
+
+    # Severity-based thresholds: Critical=1 (instant), High=2, Medium=5
+    RATE_LIMIT_BY_SEVERITY = {
+        "Critical": 1,
+        "High": 2,
+        "Medium": 5,
+    }
+    RATE_LIMIT_MAX = 5        # default fallback
 
     @staticmethod
     def process_network_detection(payload: dict) -> dict:
@@ -100,9 +107,10 @@ class NetworkAlertController:
     @staticmethod
     def _auto_block_check(src_ip: str, attack_type: str) -> bool:
         """
-        Auto-block logic:
-        1. If prevention is enabled and IP not already blocked → block after RATE_LIMIT_MAX alerts
-        2. Rate limiting: tracks alerts per IP within a time window
+        Auto-block logic with severity-based thresholds:
+        - Critical (DDoS, SYNFlood, ARPSpoof): Block IMMEDIATELY (1 alert)
+        - High (SSHBrute, FTPBrute, ICMP Flood): Block after 2 alerts
+        - Medium (PortScan): Block after 5 alerts
         Thread-safe with lock to prevent duplicate blocks.
         """
         try:
@@ -110,6 +118,11 @@ class NetworkAlertController:
 
             if not _runtime_config.get("prevention_enabled", False):
                 return False
+
+            severity = NetworkAlertController.SEVERITY_MAP.get(attack_type, "Medium")
+            threshold = NetworkAlertController.RATE_LIMIT_BY_SEVERITY.get(
+                severity, NetworkAlertController.RATE_LIMIT_MAX
+            )
 
             with _block_lock:
                 if src_ip in _runtime_config.get("blocked_ips", []):
@@ -126,13 +139,13 @@ class NetworkAlertController:
                 history[src_ip] = [t for t in history[src_ip] if now - t < window]
                 history[src_ip].append(now)
 
-                # If IP exceeded rate limit → auto-block
-                if len(history[src_ip]) >= NetworkAlertController.RATE_LIMIT_MAX:
-                    _apply_firewall_block(src_ip)
+                # If IP exceeded threshold for this severity → auto-block
+                if len(history[src_ip]) >= threshold:
+                    success = _apply_firewall_block(src_ip)
                     _runtime_config["blocked_ips"].append(src_ip)
                     history[src_ip] = []  # reset counter
-                    print(f"[AUTO-BLOCK] Blocked {src_ip} after {NetworkAlertController.RATE_LIMIT_MAX} "
-                          f"alerts in {window}s ({attack_type})")
+                    print(f"[AUTO-BLOCK] Blocked {src_ip} — {attack_type} ({severity}, "
+                          f"threshold={threshold})")
                     socketio.emit("config_update", {
                         "blocked_ips": _runtime_config["blocked_ips"],
                     })
