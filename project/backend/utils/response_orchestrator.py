@@ -196,11 +196,15 @@ class InsiderThreatResponseOrchestrator:
 
         firewall_applied = False
 
-        # LIVE MODE: server-side firewall (backup) + agent commands
+        # LIVE MODE: server-side firewall (backup) — run async to not block response
         if not cls._test_mode and host_ip and level in {"MEDIUM", "CRITICAL"}:
-            firewall_applied = cls._apply_host_firewall_block(host_ip, host_name, level)
-            if firewall_applied:
-                action += " [FIREWALL BLOCK ACTIVE]"
+            import threading
+            def _apply_fw():
+                result = cls._apply_host_firewall_block(host_ip, host_name, level)
+                if result:
+                    print(f"[HOST PREVENTION] Firewall block applied for {host_ip}")
+            threading.Thread(target=_apply_fw, daemon=True).start()
+            firewall_applied = True  # Optimistically set — rule is being applied
 
         mode_label = "TEST" if cls._test_mode else "LIVE"
         response_message = (
