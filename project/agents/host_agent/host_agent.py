@@ -1068,10 +1068,12 @@ def run_agent():
 
         _interruptible_sleep(wait)
 
-    # ── Clean shutdown ──
+    # ── Clean shutdown — undo all prevention so user keeps full access ──
+    print("\n[SHUTDOWN] Resetting all prevention before exit...")
+    _do_reset_prevention()
     session.close()
-    print("\n" + "=" * 50)
-    print("  Agent stopped cleanly.")
+    print("=" * 50)
+    print("  Agent stopped cleanly. All prevention reset.")
     print("=" * 50)
 
 
