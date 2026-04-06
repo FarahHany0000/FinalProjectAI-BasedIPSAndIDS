@@ -478,6 +478,9 @@ def _do_alert_user(reason):
             )
     except Exception as e:
         print(f"[PREVENT] Failed to show alert: {e}")
+
+
+def collect_features(window_seconds=5):
     """
     Collect 15 CERT features matching the proven Host LIVE Test.py approach.
     Uses network snapshots + recent file counting (NOT raw disk I/O).
