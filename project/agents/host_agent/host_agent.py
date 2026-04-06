@@ -60,7 +60,7 @@ signal.signal(signal.SIGTERM, _handle_signal)
 # ─────────────────────────────────────────────────────────
 
 DEFAULT_CONFIG = {
-    "server_host": "192.168.137.1",   # Laptop5 gateway IP (Windows Mobile Hotspot default)
+    "server_host": "AUTO",            # Auto-discover server via UDP broadcast
     "server_port": "5000",
     "agent_key": "changeme",
     "interval": "10",                  # seconds between reports
@@ -101,17 +101,28 @@ def load_config():
     if args.window:
         config["window"] = str(args.window)
 
-    # Auto-discovery: if server_host is "AUTO" or default, try UDP broadcast
+    # Auto-discovery: if server_host is "AUTO", try UDP broadcast
     if config["server_host"] in ("AUTO", "auto", "0.0.0.0"):
         discovered_host, discovered_port = discover_server()
         if discovered_host:
             config["server_host"] = discovered_host
             config["server_port"] = str(discovered_port)
         else:
-            print("[CONFIG] Auto-discovery failed. Using config.ini/default values.")
-            # Reset to default if it was set to AUTO
-            if config["server_host"] in ("AUTO", "auto", "0.0.0.0"):
-                config["server_host"] = DEFAULT_CONFIG["server_host"]
+            print("[CONFIG] Auto-discovery failed. Use --server <IP>:5000 to set manually.")
+            print("[CONFIG] Trying common gateway IPs...")
+            # Try common gateways as fallback
+            import requests as _req
+            for fallback_ip in ("192.168.137.1", "192.168.1.1", "192.168.0.1", "10.0.0.1"):
+                try:
+                    r = _req.get(f"http://{fallback_ip}:5000/api/hosts", timeout=2)
+                    if r.status_code in (200, 401, 403):
+                        config["server_host"] = fallback_ip
+                        print(f"[CONFIG] Found server at {fallback_ip}:5000")
+                        break
+                except Exception:
+                    continue
+            else:
+                print("[CONFIG] No server found. Please use: python host_agent.py --server <IP>:5000")
 
     return config
 
