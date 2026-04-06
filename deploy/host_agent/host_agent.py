@@ -394,8 +394,24 @@ _SAFE_PROCESSES = {
     "taskhostw.exe", "runtimebroker.exe", "searchhost.exe", "startmenuexperiencehost.exe",
     "shellexperiencehost.exe", "sihost.exe", "fontdrvhost.exe", "winlogon.exe",
     "ctfmon.exe", "dllhost.exe", "spoolsv.exe", "audiodg.exe",
-    "python.exe", "pythonw.exe", "python3.exe",  # Don't kill ourselves
-    "code.exe", "node.exe",  # VS Code
+    "python.exe", "pythonw.exe", "python3.exe",
+    "code.exe", "node.exe",
+}
+
+# Suspicious process names to kill (common hacker tools, reverse shells, etc.)
+_SUSPICIOUS_PATTERNS = {
+    "nc.exe", "ncat.exe", "netcat.exe",          # Netcat
+    "mimikatz.exe", "mimi.exe",                    # Credential theft
+    "psexec.exe", "psexec64.exe",                  # Remote execution
+    "powershell_ise.exe",                          # Script abuse
+    "wmic.exe",                                     # WMI abuse
+    "certutil.exe",                                 # Download abuse
+    "bitsadmin.exe",                                # Download abuse
+    "mshta.exe",                                    # Script host
+    "regsvr32.exe",                                 # DLL injection
+    "rundll32.exe",                                 # DLL injection
+    "cscript.exe", "wscript.exe",                  # Script hosts
+    "cmd.exe",                                      # Command shell (suspicious in context)
 }
 
 
@@ -477,7 +493,7 @@ def _do_lock_screen():
 
 
 def _do_kill_suspicious():
-    """Kill processes that are not in the safe whitelist."""
+    """Kill processes that match known suspicious/hacking tool patterns."""
     killed = []
     my_pid = os.getpid()
     my_parent = psutil.Process(my_pid).ppid()
@@ -487,15 +503,13 @@ def _do_kill_suspicious():
             pname = (proc.info["name"] or "").lower()
             pid = proc.info["pid"]
 
-            # Never kill system, ourselves, or whitelisted processes
             if pid in (0, 4, my_pid, my_parent):
                 continue
-            if pname in _SAFE_PROCESSES:
-                continue
 
-            # Kill user-level non-system processes that are unusual
-            proc.kill()
-            killed.append(f"{pname} (PID {pid})")
+            # Only kill processes that match known suspicious patterns
+            if pname in _SUSPICIOUS_PATTERNS:
+                proc.kill()
+                killed.append(f"{pname} (PID {pid})")
         except (psutil.NoSuchProcess, psutil.AccessDenied):
             continue
         except Exception:
@@ -707,7 +721,7 @@ def _confirm_prevention(session, base_url, host_name, results):
         return
     try:
         session.post(
-            f"{base_url}/api/agent/prevention-confirm",
+            f"{base_url}/prevention-confirm",
             json={
                 "host_name": host_name,
                 "results": results,
@@ -839,7 +853,7 @@ def run_agent():
 
                 # Also poll for queued commands (from attack simulation or other sources)
                 try:
-                    cmd_url = f"{base_url}/api/agent/pending-commands"
+                    cmd_url = f"{base_url}/pending-commands"
                     cmd_resp = session.post(cmd_url, json={"host_name": host_name}, timeout=5)
                     if cmd_resp.status_code == 200:
                         cmd_data = cmd_resp.json()
