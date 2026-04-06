@@ -404,39 +404,59 @@ def execute_prevention_commands(commands, test_mode=True):
     Execute prevention commands received from the backend.
     In test_mode: only logs what WOULD happen.
     In live mode: actually executes the actions.
+    Returns list of results for confirmation back to backend.
     """
     if not commands:
-        return
+        return []
 
     ts = datetime.now().strftime("%H:%M:%S")
     mode = "TEST" if test_mode else "LIVE"
+    results = []
 
     for cmd in commands:
         cmd_type = cmd.get("type", "")
         reason = cmd.get("reason", "")
+        success = False
 
         if cmd_type == "lock_screen":
             print(f"[{ts}] [PREVENT-{mode}] LOCK SCREEN — {reason}")
             if not test_mode:
-                _do_lock_screen()
+                success = _do_lock_screen()
+            else:
+                success = True
 
         elif cmd_type == "kill_suspicious_processes":
             print(f"[{ts}] [PREVENT-{mode}] KILL SUSPICIOUS PROCESSES — {reason}")
             if not test_mode:
-                _do_kill_suspicious()
+                success = _do_kill_suspicious()
+            else:
+                success = True
 
         elif cmd_type == "disable_usb":
             print(f"[{ts}] [PREVENT-{mode}] DISABLE USB STORAGE — {reason}")
             if not test_mode:
-                _do_disable_usb()
+                success = _do_disable_usb()
+            else:
+                success = True
 
         elif cmd_type == "alert_user":
             print(f"[{ts}] [PREVENT-{mode}] ALERT — {reason}")
             if not test_mode:
-                _do_alert_user(reason)
+                success = _do_alert_user(reason)
+            else:
+                success = True
 
         else:
             print(f"[{ts}] [PREVENT-{mode}] UNKNOWN COMMAND: {cmd_type}")
+
+        results.append({
+            "type": cmd_type,
+            "success": success,
+            "mode": mode,
+            "time": datetime.now().isoformat(),
+        })
+
+    return results
 
 
 def _do_lock_screen():
@@ -444,14 +464,16 @@ def _do_lock_screen():
     try:
         if platform.system() == "Windows":
             ctypes.windll.user32.LockWorkStation()
-            print("[PREVENT] Screen locked successfully")
+            print("[PREVENT] ✓ Screen locked successfully")
+            return True
         else:
-            # Linux: use loginctl or xdg-screensaver
             subprocess.run(["loginctl", "lock-session"], timeout=5,
                            capture_output=True, text=True)
-            print("[PREVENT] Screen locked (Linux)")
+            print("[PREVENT] ✓ Screen locked (Linux)")
+            return True
     except Exception as e:
-        print(f"[PREVENT] Failed to lock screen: {e}")
+        print(f"[PREVENT] ✗ Failed to lock screen: {e}")
+        return False
 
 
 def _do_kill_suspicious():
@@ -480,36 +502,39 @@ def _do_kill_suspicious():
             continue
 
     if killed:
-        print(f"[PREVENT] Killed {len(killed)} suspicious processes: {', '.join(killed[:5])}")
+        print(f"[PREVENT] ✓ Killed {len(killed)} suspicious processes: {', '.join(killed[:5])}")
     else:
-        print("[PREVENT] No suspicious processes found to kill")
+        print("[PREVENT] ✓ No suspicious processes found to kill")
+    return True
 
 
 def _do_disable_usb():
     """Disable USB storage devices via Windows registry."""
     try:
         if platform.system() == "Windows":
-            # Set USBSTOR Start value to 4 (disabled)
             result = subprocess.run(
                 ["reg", "add", r"HKLM\SYSTEM\CurrentControlSet\Services\USBSTOR",
                  "/v", "Start", "/t", "REG_DWORD", "/d", "4", "/f"],
                 capture_output=True, text=True, timeout=10
             )
             if result.returncode == 0:
-                print("[PREVENT] USB storage disabled via registry")
+                print("[PREVENT] ✓ USB storage disabled via registry")
+                return True
             else:
-                print(f"[PREVENT] Failed to disable USB: {result.stderr or result.stdout}")
+                print(f"[PREVENT] ✗ Failed to disable USB: {result.stderr or result.stdout}")
+                return False
         else:
             print("[PREVENT] USB disable not implemented for this OS")
+            return False
     except Exception as e:
-        print(f"[PREVENT] Failed to disable USB: {e}")
+        print(f"[PREVENT] ✗ Failed to disable USB: {e}")
+        return False
 
 
 def _do_alert_user(reason):
     """Show a warning message box to the user."""
     try:
         if platform.system() == "Windows":
-            # Non-blocking message box using ctypes
             MB_OK = 0x00000000
             MB_ICONWARNING = 0x00000030
             MB_TOPMOST = 0x00040000
@@ -519,8 +544,11 @@ def _do_alert_user(reason):
                 "IDS/IPS — Threat Detected",
                 MB_OK | MB_ICONWARNING | MB_TOPMOST
             )
+            print("[PREVENT] ✓ Alert shown to user")
+            return True
     except Exception as e:
-        print(f"[PREVENT] Failed to show alert: {e}")
+        print(f"[PREVENT] ✗ Failed to show alert: {e}")
+        return False
 
 
 def collect_features(window_seconds=5):
@@ -673,6 +701,26 @@ def _interruptible_sleep(seconds):
         time.sleep(min(0.5, end - time.time()))
 
 
+def _confirm_prevention(session, base_url, host_name, results):
+    """Send confirmation back to backend that prevention was executed."""
+    if not results:
+        return
+    try:
+        session.post(
+            f"{base_url}/api/agent/prevention-confirm",
+            json={
+                "host_name": host_name,
+                "results": results,
+                "timestamp": datetime.now().isoformat(),
+            },
+            timeout=5,
+        )
+        succeeded = sum(1 for r in results if r.get("success"))
+        print(f"[PREVENTION] ✓ Confirmed {succeeded}/{len(results)} actions to backend")
+    except Exception:
+        print("[PREVENTION] Could not confirm to backend (non-critical)")
+
+
 # ─────────────────────────────────────────────────────────
 # Main Agent Loop
 # ─────────────────────────────────────────────────────────
@@ -786,7 +834,8 @@ def run_agent():
                 is_test_mode = prevention.get("test_mode", True)
                 if prevention_cmds:
                     print(f"[{ts}] [PREVENTION] Received {len(prevention_cmds)} commands (mode={'TEST' if is_test_mode else 'LIVE'})")
-                    execute_prevention_commands(prevention_cmds, test_mode=is_test_mode)
+                    results = execute_prevention_commands(prevention_cmds, test_mode=is_test_mode)
+                    _confirm_prevention(session, base_url, host_name, results)
 
                 # Also poll for queued commands (from attack simulation or other sources)
                 try:
@@ -798,7 +847,8 @@ def run_agent():
                         cmd_test_mode = cmd_data.get("test_mode", True)
                         if queued_cmds:
                             print(f"[{ts}] [PREVENTION] Queued {len(queued_cmds)} commands (mode={'TEST' if cmd_test_mode else 'LIVE'})")
-                            execute_prevention_commands(queued_cmds, test_mode=cmd_test_mode)
+                            results = execute_prevention_commands(queued_cmds, test_mode=cmd_test_mode)
+                            _confirm_prevention(session, base_url, host_name, results)
                 except Exception:
                     pass  # Non-critical — don't break the main loop
 

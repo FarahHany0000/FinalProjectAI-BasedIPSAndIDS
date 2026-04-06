@@ -231,6 +231,33 @@ def pending_commands():
     })
 
 
+@agent_bp.route("/api/agent/prevention-confirm", methods=["POST"])
+@require_agent_key
+def prevention_confirm():
+    """Agent confirms that prevention commands were executed."""
+    data = request.get_json(silent=True) or {}
+    host_name = data.get("host_name", "unknown")
+    results = data.get("results", [])
+    timestamp = data.get("timestamp", "")
+
+    succeeded = sum(1 for r in results if r.get("success"))
+    total = len(results)
+    actions = [r.get("type", "?") for r in results]
+
+    print(f"[PREVENTION CONFIRMED] {host_name}: {succeeded}/{total} actions succeeded — {', '.join(actions)}")
+
+    # Emit to frontend for real-time visibility
+    socketio.emit("prevention_confirmed", {
+        "host_name": host_name,
+        "results": results,
+        "succeeded": succeeded,
+        "total": total,
+        "timestamp": timestamp,
+    })
+
+    return jsonify({"status": "confirmed", "received": total})
+
+
 @agent_bp.route("/api/agent/network-alert", methods=["POST"])
 @require_agent_key
 @validate_json("source", "attack_type", "confidence")
