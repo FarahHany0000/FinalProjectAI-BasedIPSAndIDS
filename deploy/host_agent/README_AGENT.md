@@ -3,26 +3,46 @@
 
 ## Quick Start / البداية السريعة
 
-### 1. Install / التثبيت
+### 1. Install & Setup / التثبيت والإعداد
 ```bash
 python install_agent.py
 ```
+This automatically:
+- Creates a virtual environment (venv)
+- Installs dependencies (psutil, requests)
+- No configuration needed — defaults work out of the box!
 
-### 2. Configure / الإعداد
-Edit `config.ini`:
-- **server_host**: Set to `AUTO` for automatic discovery, or the server's IP
-- **agent_key**: Must match the server's AGENT_KEY (ask your admin)
-
-### 3. Run / التشغيل
+### 2. Run / التشغيل
 ```bash
-python host_agent.py
+# Activate venv first
+venv\Scripts\activate          # Windows
+source venv/bin/activate       # Linux/Mac
+
+# Run with your server IP
+python host_agent.py --server <SERVER_IP>:5000
+```
+
+**Example:**
+```bash
+python host_agent.py --server 192.168.137.1:5000
+```
+
+> **Note:** Replace `<SERVER_IP>` with the IP of the machine running the IDS backend.
+> The `agent_key` defaults to `changeme` on both server and agent — they match automatically.
+
+### 3. Manual venv setup (alternative)
+```bash
+python -m venv venv
+venv\Scripts\activate          # Windows
+pip install -r requirements.txt
+python host_agent.py --server <SERVER_IP>:5000
 ```
 
 ## What Happens / ماذا يحدث
 
 1. **First Run**: The agent generates a unique hardware fingerprint
-2. **Registration**: Sends fingerprint to the IDS server
-3. **Approval**: Admin must approve this device in the dashboard
+2. **Registration**: Sends fingerprint to the IDS server automatically
+3. **Approval**: Admin approves this device in the dashboard (or auto-approved)
 4. **Monitoring**: Once approved, sends system metrics every 10 seconds
 
 ## Requirements / المتطلبات
@@ -30,21 +50,26 @@ python host_agent.py
 - Network connection to the IDS server (same network/subnet)
 - psutil, requests (auto-installed)
 
+## Files / الملفات
+| File | Purpose |
+|------|---------|
+| `host_agent.py` | Main agent script |
+| `config.ini` | Configuration (optional — CLI args override) |
+| `requirements.txt` | Python dependencies |
+| `install_agent.py` | Quick setup script |
+
 ## Security / الأمان
 - Each machine has a unique hardware fingerprint (CPU + MAC + disk serial)
 - Copying agent files to another machine will NOT work (fingerprint mismatch)
 - New devices require admin approval before monitoring begins
-- All communication uses authentication headers
 
 ## Troubleshooting / حل المشاكل
 
 | Problem | Solution |
 |---------|----------|
-| "Auto-discovery failed" | Set server_host manually in config.ini |
-| "Bad agent key" | Check agent_key matches the server |
+| Can't connect | Check the server IP and that port 5000 is open |
 | "Pending approval" | Ask admin to approve in the Agents page |
 | "Hardware mismatch" | Agent was copied — run on the original machine |
-| Can't connect | Check firewall allows port 5000 (TCP) and 5001 (UDP) |
 
 ## Stopping the Agent / إيقاف العميل
 Press `Ctrl+C` — the agent stops gracefully.
