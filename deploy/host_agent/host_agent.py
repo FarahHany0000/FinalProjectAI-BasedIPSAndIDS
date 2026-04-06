@@ -108,11 +108,43 @@ def load_config():
             config["server_host"] = discovered_host
             config["server_port"] = str(discovered_port)
         else:
-            print("[CONFIG] Auto-discovery failed. Use --server <IP>:5000 to set manually.")
-            print("[CONFIG] Trying common gateway IPs...")
-            # Try common gateways as fallback
+            print("[CONFIG] Auto-discovery failed. Scanning network for server...")
             import requests as _req
-            for fallback_ip in ("192.168.137.1", "192.168.1.1", "192.168.0.1", "10.0.0.1"):
+
+            # Build smart fallback list: default gateway + common IPs + subnet scan
+            fallback_ips = []
+
+            # 1. Get the default gateway (most likely the server)
+            try:
+                import subprocess as _sp
+                gw_result = _sp.run(["ipconfig"], capture_output=True, text=True, timeout=5)
+                for line in gw_result.stdout.split("\n"):
+                    if "Default Gateway" in line:
+                        gw = line.split(":")[-1].strip()
+                        if gw and gw not in fallback_ips:
+                            fallback_ips.append(gw)
+            except Exception:
+                pass
+
+            # 2. Scan the local subnet (e.g. if we're on 10.100.241.28, try .1-.254)
+            try:
+                my_ip = get_local_ip("8.8.8.8")
+                if my_ip and my_ip != "127.0.0.1":
+                    prefix = my_ip.rsplit(".", 1)[0]
+                    # Try common server positions in subnet
+                    for last_octet in (1, 2, 100, 200, 140, 28, 50):
+                        candidate = f"{prefix}.{last_octet}"
+                        if candidate != my_ip and candidate not in fallback_ips:
+                            fallback_ips.append(candidate)
+            except Exception:
+                pass
+
+            # 3. Common hotspot/router IPs
+            for static_ip in ("192.168.137.1", "192.168.1.1", "192.168.0.1", "10.0.0.1"):
+                if static_ip not in fallback_ips:
+                    fallback_ips.append(static_ip)
+
+            for fallback_ip in fallback_ips:
                 try:
                     r = _req.get(f"http://{fallback_ip}:5000/api/hosts", timeout=2)
                     if r.status_code in (200, 401, 403):
