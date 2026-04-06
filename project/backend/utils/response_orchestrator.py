@@ -88,9 +88,21 @@ class InsiderThreatResponseOrchestrator:
 
     @classmethod
     def pop_commands(cls, host_name: str) -> List[Dict[str, Any]]:
-        """Pop all pending commands for a host (agent calls this to get its orders)."""
-        commands = cls._pending_commands.pop(host_name, [])
-        if commands:
+        """Pop all pending commands for a host. Deduplicates by command type."""
+        raw = cls._pending_commands.pop(host_name, [])
+        if not raw:
+            return []
+        # Deduplicate: keep first occurrence of each command type
+        seen = set()
+        commands = []
+        for cmd in raw:
+            ctype = cmd.get("type", "")
+            if ctype not in seen:
+                seen.add(ctype)
+                commands.append(cmd)
+        if len(commands) < len(raw):
+            print(f"[PREVENTION] Delivering {len(commands)} commands to {host_name} (deduplicated from {len(raw)})")
+        else:
             print(f"[PREVENTION] Delivering {len(commands)} commands to {host_name}")
         return commands
 

@@ -30,6 +30,7 @@ import hmac
 import json
 import ctypes
 import subprocess
+import threading
 import psutil
 from datetime import datetime
 
@@ -44,6 +45,10 @@ except ImportError:
 # ─────────────────────────────────────────────────────────
 
 _shutdown = False
+_prevention_paused = False          # Admin dismissed alert → pause prevention
+_last_prevention = {}               # {cmd_type: timestamp} — cooldown tracker
+_PREVENTION_COOLDOWN = 120          # seconds before same action can repeat
+_ADMIN_PASSWORD = "admin123"        # Password to dismiss alert & reset prevention
 
 
 def _handle_signal(signum, frame):
@@ -418,21 +423,59 @@ _SUSPICIOUS_PATTERNS = {
 def execute_prevention_commands(commands, test_mode=True):
     """
     Execute prevention commands received from the backend.
-    In test_mode: only logs what WOULD happen.
-    In live mode: actually executes the actions.
+    - Deduplicates by command type (only first of each type runs)
+    - Respects cooldown (same type won't re-run within _PREVENTION_COOLDOWN seconds)
+    - Skips if prevention is paused (admin dismissed)
+    - Handles 'reset_prevention' command to undo all prevention
     Returns list of results for confirmation back to backend.
     """
+    global _prevention_paused, _last_prevention
+
     if not commands:
         return []
 
     ts = datetime.now().strftime("%H:%M:%S")
     mode = "TEST" if test_mode else "LIVE"
     results = []
+    now = time.time()
 
+    # Check for reset command first
     for cmd in commands:
+        if cmd.get("type") == "reset_prevention":
+            print(f"[{ts}] [PREVENTION] ← RESET command received — undoing all prevention")
+            _do_reset_prevention()
+            results.append({"type": "reset_prevention", "success": True, "mode": mode, "time": datetime.now().isoformat()})
+            return results
+
+    # Skip if paused
+    if _prevention_paused:
+        print(f"[{ts}] [PREVENTION] Skipped {len(commands)} commands (admin paused)")
+        return [{"type": c.get("type", "?"), "success": False, "mode": "PAUSED", "time": datetime.now().isoformat()} for c in commands]
+
+    # Deduplicate by type — only keep first occurrence of each type
+    seen_types = set()
+    unique_commands = []
+    for cmd in commands:
+        ctype = cmd.get("type", "")
+        if ctype not in seen_types:
+            seen_types.add(ctype)
+            unique_commands.append(cmd)
+
+    if len(unique_commands) < len(commands):
+        print(f"[{ts}] [PREVENTION] Deduplicated {len(commands)} → {len(unique_commands)} commands")
+
+    for cmd in unique_commands:
         cmd_type = cmd.get("type", "")
         reason = cmd.get("reason", "")
         success = False
+
+        # Cooldown check
+        last_run = _last_prevention.get(cmd_type, 0)
+        if now - last_run < _PREVENTION_COOLDOWN:
+            remaining = int(_PREVENTION_COOLDOWN - (now - last_run))
+            print(f"[{ts}] [PREVENTION] Skipped {cmd_type} (cooldown: {remaining}s remaining)")
+            results.append({"type": cmd_type, "success": False, "mode": "COOLDOWN", "time": datetime.now().isoformat()})
+            continue
 
         if cmd_type == "lock_screen":
             print(f"[{ts}] [PREVENT-{mode}] LOCK SCREEN — {reason}")
@@ -465,6 +508,9 @@ def execute_prevention_commands(commands, test_mode=True):
         else:
             print(f"[{ts}] [PREVENT-{mode}] UNKNOWN COMMAND: {cmd_type}")
 
+        if success:
+            _last_prevention[cmd_type] = now
+
         results.append({
             "type": cmd_type,
             "success": success,
@@ -473,6 +519,27 @@ def execute_prevention_commands(commands, test_mode=True):
         })
 
     return results
+
+
+def _do_reset_prevention():
+    """Undo all prevention actions — restore system to normal state."""
+    global _prevention_paused, _last_prevention
+    _prevention_paused = False
+    _last_prevention.clear()
+
+    # Re-enable USB storage
+    if platform.system() == "Windows":
+        try:
+            subprocess.run(
+                ["reg", "add", r"HKLM\SYSTEM\CurrentControlSet\Services\USBSTOR",
+                 "/v", "Start", "/t", "REG_DWORD", "/d", "3", "/f"],
+                capture_output=True, text=True, timeout=10
+            )
+            print("[RESET] ✓ USB storage re-enabled")
+        except Exception:
+            print("[RESET] Could not re-enable USB (needs admin)")
+
+    print("[RESET] ✓ Prevention state cleared — system back to normal")
 
 
 def _do_lock_screen():
@@ -546,9 +613,88 @@ def _do_disable_usb():
 
 
 def _do_alert_user(reason):
-    """Show a warning message box to the user."""
-    try:
-        if platform.system() == "Windows":
+    """
+    Show a security alert dialog with admin password option.
+    If user enters correct admin password → pause prevention & reset.
+    Runs in a separate thread so it doesn't block the agent loop.
+    """
+    global _prevention_paused
+
+    def _show_dialog():
+        global _prevention_paused
+        try:
+            import tkinter as tk
+            from tkinter import messagebox
+
+            root = tk.Tk()
+            root.withdraw()
+            root.attributes("-topmost", True)
+
+            dialog = tk.Toplevel(root)
+            dialog.title("IDS/IPS — Threat Detected")
+            dialog.geometry("420x320")
+            dialog.attributes("-topmost", True)
+            dialog.resizable(False, False)
+            dialog.protocol("WM_DELETE_CLOSE", lambda: None)
+
+            # Center on screen
+            dialog.update_idletasks()
+            x = (dialog.winfo_screenwidth() // 2) - 210
+            y = (dialog.winfo_screenheight() // 2) - 160
+            dialog.geometry(f"+{x}+{y}")
+
+            # Warning icon + message
+            tk.Label(dialog, text="⚠  Security Alert!", font=("Segoe UI", 16, "bold"),
+                     fg="#c0392b").pack(pady=(15, 5))
+            tk.Label(dialog, text=reason, font=("Segoe UI", 10),
+                     wraplength=380, justify="center").pack(pady=5)
+            tk.Label(dialog, text="Your system activity has been flagged as suspicious.\n"
+                     "Please contact your IT administrator.",
+                     font=("Segoe UI", 9), fg="#555", wraplength=380, justify="center").pack(pady=5)
+
+            # Separator
+            tk.Frame(dialog, height=1, bg="#ccc").pack(fill="x", padx=20, pady=10)
+
+            # Admin password section
+            tk.Label(dialog, text="Admin / IT Password (to dismiss):",
+                     font=("Segoe UI", 9)).pack()
+            pw_var = tk.StringVar()
+            pw_entry = tk.Entry(dialog, textvariable=pw_var, show="*", width=30,
+                                font=("Segoe UI", 10))
+            pw_entry.pack(pady=5)
+
+            status_label = tk.Label(dialog, text="", font=("Segoe UI", 9), fg="red")
+            status_label.pack()
+
+            def on_dismiss():
+                global _prevention_paused
+                entered = pw_var.get().strip()
+                if entered == _ADMIN_PASSWORD:
+                    _prevention_paused = True
+                    _do_reset_prevention()
+                    print("[ALERT] ✓ Admin authenticated — prevention paused & reset")
+                    dialog.destroy()
+                    root.destroy()
+                else:
+                    status_label.config(text="Wrong password! Try again.")
+
+            def on_ok():
+                dialog.destroy()
+                root.destroy()
+
+            btn_frame = tk.Frame(dialog)
+            btn_frame.pack(pady=10)
+            tk.Button(btn_frame, text="OK", width=12, command=on_ok,
+                      font=("Segoe UI", 10)).pack(side="left", padx=5)
+            tk.Button(btn_frame, text="Admin Dismiss", width=14, command=on_dismiss,
+                      font=("Segoe UI", 10), bg="#e74c3c", fg="white").pack(side="left", padx=5)
+
+            pw_entry.focus_set()
+            pw_entry.bind("<Return>", lambda e: on_dismiss())
+
+            dialog.mainloop()
+        except ImportError:
+            # Fallback to simple MessageBox if tkinter not available
             MB_OK = 0x00000000
             MB_ICONWARNING = 0x00000030
             MB_TOPMOST = 0x00040000
@@ -558,11 +704,14 @@ def _do_alert_user(reason):
                 "IDS/IPS — Threat Detected",
                 MB_OK | MB_ICONWARNING | MB_TOPMOST
             )
-            print("[PREVENT] ✓ Alert shown to user")
-            return True
-    except Exception as e:
-        print(f"[PREVENT] ✗ Failed to show alert: {e}")
-        return False
+        except Exception as e:
+            print(f"[PREVENT] ✗ Alert dialog error: {e}")
+
+    # Run in thread so it doesn't block the agent loop
+    t = threading.Thread(target=_show_dialog, daemon=True)
+    t.start()
+    print("[PREVENT] ✓ Alert dialog shown to user")
+    return True
 
 
 def collect_features(window_seconds=5):

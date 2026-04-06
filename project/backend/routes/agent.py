@@ -275,6 +275,32 @@ def network_alert():
         return jsonify({"status": "error", "message": str(e)}), 500
 
 
+@agent_bp.route("/api/host/reset-prevention", methods=["POST"])
+def reset_host_prevention():
+    """
+    Frontend calls this to send a reset command to a specific agent.
+    Queues a 'reset_prevention' command that the agent will pick up.
+    """
+    from utils.response_orchestrator import InsiderThreatResponseOrchestrator
+
+    data = request.get_json(silent=True) or {}
+    host_name = data.get("host_name", "")
+    if not host_name:
+        return jsonify({"error": "host_name required"}), 400
+
+    InsiderThreatResponseOrchestrator.queue_commands(host_name, [
+        {"type": "reset_prevention", "reason": "Admin requested prevention reset"}
+    ])
+
+    # Also clean up server-side state
+    InsiderThreatResponseOrchestrator._active_constraints.pop(host_name, None)
+
+    print(f"[PREVENTION RESET] Queued reset for {host_name}")
+    socketio.emit("prevention_reset", {"host_name": host_name})
+
+    return jsonify({"status": "reset_queued", "host_name": host_name})
+
+
 # ── Admin: Approve / Reject Agents ──
 
 @agent_bp.route("/api/agents/<int:agent_db_id>/approve", methods=["POST"])
