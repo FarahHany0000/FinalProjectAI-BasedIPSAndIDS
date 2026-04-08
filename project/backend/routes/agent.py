@@ -334,3 +334,44 @@ def reject_agent(agent_db_id):
     socketio.emit("agent_removed", agent_dict)
     print(f"[ADMIN] Rejected agent: {agent_dict['host_name']}")
     return jsonify({"status": "rejected"})
+
+
+# ── Agent Alert Status Reporting ──
+
+@agent_bp.route("/api/agent/alert-status", methods=["POST"])
+@require_agent_key
+def agent_alert_status():
+    """
+    Receive alert dialog events from agents.
+    Events: dialog_shown, password_failed, password_success, dialog_dismissed
+    Emits to frontend via WebSocket for real-time admin visibility.
+    """
+    data = request.get_json(silent=True) or {}
+    event = data.get("event", "unknown")
+    host_name = data.get("host_name", "unknown")
+    agent_id = data.get("agent_id", "")
+    details = data.get("details", {})
+
+    ts = datetime.datetime.now().isoformat()
+
+    # Log event
+    event_labels = {
+        "dialog_shown": "Alert dialog displayed",
+        "password_failed": f"Failed password attempt (#{details.get('attempts', '?')})",
+        "password_success": "Admin authenticated successfully",
+        "dialog_dismissed": f"Dialog dismissed ({details.get('method', 'unknown')})",
+    }
+    label = event_labels.get(event, event)
+    print(f"[ALERT STATUS] {host_name}: {label}")
+
+    # Emit to frontend in real-time
+    socketio.emit("alert_status", {
+        "event": event,
+        "host_name": host_name,
+        "agent_id": agent_id,
+        "details": details,
+        "label": label,
+        "time": ts,
+    })
+
+    return jsonify({"status": "received", "event": event})

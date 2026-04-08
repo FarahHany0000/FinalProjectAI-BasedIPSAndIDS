@@ -622,24 +622,41 @@ def attack_abuse():
 
     print(f"  → Sent {udp_count} UDP packets")
 
-    # Phase 3: Create "downloaded tools" files
-    file_count = 100
+    # Phase 3: Create "downloaded tools" files (need 500+ for model detection)
+    file_count = 600
     abuse_dir = _create_sim_dir("downloaded_tools")
     print(f"  Phase 3: Creating {file_count} files (simulated tool downloads)...")
     for i in range(file_count):
         if _stop_event.is_set():
             return
-        fname = f"tool_{i:03d}.bin"
+        fname = f"tool_{i:04d}.bin"
         with open(os.path.join(abuse_dir, fname), "wb") as f:
             f.write(os.urandom(1024))
+        if (i + 1) % 100 == 0:
+            pct = int((i + 1) / file_count * 30)
+            bar = "█" * pct + "░" * (30 - pct)
+            print(f"  [{bar}] {i+1}/{file_count} files created", end="\r")
+    print(f"  [{'█' * 30}] {file_count}/{file_count} files created")
 
-    print(f"  → {file_count} files created")
+    # Phase 4: Rapidly read/modify files (boost file activity)
+    print(f"  Phase 4: Rapidly accessing files (simulating resource abuse)...")
+    for i in range(file_count):
+        if _stop_event.is_set():
+            return
+        fpath = os.path.join(abuse_dir, f"tool_{i:04d}.bin")
+        try:
+            with open(fpath, "rb") as f:
+                _ = f.read()
+        except Exception:
+            pass
+    print(f"  → {file_count} files read back")
 
     print(f"\n  ✅ System Abuse activity complete!")
     print(f"     → {conn_count} TCP connections + {udp_count} UDP packets")
-    print(f"     → {file_count} files created")
+    print(f"     → {file_count} files created + {file_count} files read")
     print(f"     → Agent features affected:")
-    print(f"       • total_device_activities: ↑↑↑ (network packets)")
+    print(f"       • total_file_activities: ~{file_count}+ (tool downloads)")
+    print(f"       • total_device_activities: ↑↑↑ (network + files)")
     print(f"       • total_logons: +{conn_count}")
     after_h = "YES ✓" if (datetime.now().hour < 8 or datetime.now().hour >= 18) else "NO"
     print(f"       • after_hours: {after_h}")

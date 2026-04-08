@@ -13,6 +13,8 @@ Exit codes:
 import sys
 import os
 import argparse
+import threading
+import time
 
 # ──────────────────────────────────────────────────────────────
 # HTML Template — dark cybersecurity theme, frameless design
@@ -43,12 +45,39 @@ ALERT_HTML = """<!DOCTYPE html>
 
   body {
     font-family: 'Segoe UI Variable Display', 'Segoe UI', -apple-system, sans-serif;
-    background: var(--bg);
+    background: #000;
     color: var(--text);
     height: 100vh;
     overflow: hidden;
     -webkit-font-smoothing: antialiased;
-    border: 1px solid rgba(239, 68, 68, 0.08);
+    cursor: not-allowed;
+    user-select: none;
+  }
+
+  /* Fullscreen dark backdrop — blocks all desktop interaction */
+  .backdrop {
+    position: fixed; inset: 0;
+    background: rgba(0, 0, 0, 0.94);
+    z-index: 1;
+  }
+
+  /* Centered floating dialog card */
+  .dialog-card {
+    position: fixed;
+    top: 50%; left: 50%;
+    transform: translate(-50%, -50%);
+    width: 480px; height: 560px;
+    z-index: 10;
+    background: var(--bg);
+    border-radius: 16px;
+    border: 1px solid rgba(239, 68, 68, 0.2);
+    overflow: hidden;
+    cursor: default;
+    user-select: text;
+    box-shadow:
+      0 0 80px rgba(239, 68, 68, 0.12),
+      0 25px 60px rgba(0, 0, 0, 0.8),
+      0 0 200px rgba(239, 68, 68, 0.06);
   }
 
   /* ── Animated grid background ── */
@@ -60,6 +89,7 @@ ALERT_HTML = """<!DOCTYPE html>
     background-size: 28px 28px;
     animation: drift 40s linear infinite;
     pointer-events: none;
+    z-index: 2;
   }
   @keyframes drift { to { transform: translate(28px, 28px); } }
 
@@ -116,7 +146,7 @@ ALERT_HTML = """<!DOCTYPE html>
   .content {
     display: flex; flex-direction: column; align-items: center;
     padding: 22px 32px 18px;
-    height: calc(100vh - 38px);
+    height: calc(100% - 38px);
   }
 
   /* Shield icon */
@@ -274,9 +304,11 @@ ALERT_HTML = """<!DOCTYPE html>
 </style>
 </head>
 <body>
+  <div class="backdrop"></div>
   <div class="bg-grid"></div>
   <div class="scan-line"></div>
 
+  <div class="dialog-card">
   <div class="title-bar pywebview-drag-region">
     <div class="title-bar-left">
       <div class="title-dot"></div>
@@ -327,6 +359,7 @@ ALERT_HTML = """<!DOCTYPE html>
 
     <p class="footer">AI-Based IDS/IPS &bull; Threat Response System</p>
   </div>
+  </div><!-- /dialog-card -->
 
 <script>
   var apiReady = false;
@@ -399,12 +432,42 @@ ALERT_HTML = """<!DOCTYPE html>
 
 
 # ──────────────────────────────────────────────────────────────
+# Event reporting — notify backend about alert dialog events
+# ──────────────────────────────────────────────────────────────
+
+def report_event(backend_url, agent_id, host_name, event_type, details=None):
+    """Report alert event to backend (non-blocking background thread)."""
+    if not backend_url:
+        return
+    def _post():
+        try:
+            import requests
+            requests.post(
+                f"{backend_url}/api/agent/alert-status",
+                json={
+                    "agent_id": agent_id,
+                    "host_name": host_name,
+                    "event": event_type,
+                    "details": details or {},
+                },
+                headers={"X-Agent-Key": "changeme"},
+                timeout=3,
+            )
+        except Exception:
+            pass
+    threading.Thread(target=_post, daemon=True).start()
+
+
+# ──────────────────────────────────────────────────────────────
 # Main — runs as subprocess, shows dialog, returns exit code
 # ──────────────────────────────────────────────────────────────
 
 def main():
     parser = argparse.ArgumentParser(description="IDS/IPS Alert Dialog")
     parser.add_argument("--reason", default="Threat detected", help="Alert reason")
+    parser.add_argument("--backend-url", default="", help="Backend URL for event reporting")
+    parser.add_argument("--agent-id", default="", help="Agent ID")
+    parser.add_argument("--host-name", default="", help="Host name")
     args = parser.parse_args()
 
     admin_pw = os.environ.get("_IDS_ADMIN_PW", "")
@@ -426,11 +489,17 @@ def main():
         def __init__(self):
             self.authenticated = False
             self._window = None
+            self.failed_attempts = 0
 
         def try_dismiss(self, entered_pw):
             if entered_pw == admin_pw:
                 self.authenticated = True
+                report_event(args.backend_url, args.agent_id, args.host_name,
+                           "password_success")
                 return True
+            self.failed_attempts += 1
+            report_event(args.backend_url, args.agent_id, args.host_name,
+                       "password_failed", {"attempts": self.failed_attempts})
             return False
 
         def close_dialog(self):
@@ -449,39 +518,25 @@ def main():
     )
     html = ALERT_HTML.replace("{{REASON}}", reason_safe)
 
-    # Get screen dimensions for centering
-    try:
-        import ctypes
-        user32 = ctypes.windll.user32
-        screen_w = user32.GetSystemMetrics(0)
-        screen_h = user32.GetSystemMetrics(1)
-    except Exception:
-        screen_w, screen_h = 1920, 1080
-
-    win_w, win_h = 480, 560
-    x = (screen_w - win_w) // 2
-    y = (screen_h - win_h) // 2
+    # Report dialog shown to backend
+    report_event(args.backend_url, args.agent_id, args.host_name,
+               "dialog_shown", {"reason": args.reason})
 
     def block_close():
         """Prevent window from being closed without admin password."""
         if api.authenticated:
-            return True  # allow close after auth
-        # Play error sound when they try to close
+            return True
         try:
             import winsound
             winsound.MessageBeep(winsound.MB_ICONHAND)
         except Exception:
             pass
-        return False  # block close
+        return False
 
     window = webview.create_window(
         title="IDS/IPS — Threat Detected",
         html=html,
-        width=win_w,
-        height=win_h,
-        x=x,
-        y=y,
-        resizable=False,
+        fullscreen=True,
         on_top=True,
         frameless=True,
         js_api=api,
@@ -489,7 +544,33 @@ def main():
     window.events.closing += block_close
     api._window = window
 
+    # Focus enforcement — bring window back if user Alt+Tabs
+    def _enforce_focus():
+        try:
+            import ctypes
+            user32 = ctypes.windll.user32
+            time.sleep(2)
+            while not api.authenticated:
+                try:
+                    hwnd = user32.FindWindowW(None, "IDS/IPS \u2014 Threat Detected")
+                    if hwnd:
+                        fg = user32.GetForegroundWindow()
+                        if fg != hwnd:
+                            user32.SetForegroundWindow(hwnd)
+                except Exception:
+                    pass
+                time.sleep(1)
+        except Exception:
+            pass
+
+    threading.Thread(target=_enforce_focus, daemon=True).start()
+
     webview.start()
+
+    # Report dialog dismissed
+    report_event(args.backend_url, args.agent_id, args.host_name,
+               "dialog_dismissed",
+               {"method": "admin_password" if api.authenticated else "forced_close"})
 
     sys.exit(0 if api.authenticated else 1)
 

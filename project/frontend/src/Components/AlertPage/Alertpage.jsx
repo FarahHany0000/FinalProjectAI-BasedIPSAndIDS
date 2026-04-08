@@ -7,6 +7,7 @@ import socket from "../../socket";
 export default function AlertsPage() {
   const navigate = useNavigate();
   const [alerts, setAlerts] = useState([]);
+  const [agentEvents, setAgentEvents] = useState([]);
 
   const fetchAlerts = async () => {
     try {
@@ -26,11 +27,36 @@ export default function AlertsPage() {
       setAlerts(prev => [alert, ...prev].slice(0, 100));
     });
 
+    socket.on("alert_status", (event) => {
+      setAgentEvents(prev => [event, ...prev].slice(0, 50));
+    });
+
     return () => {
       clearInterval(interval);
       socket.off("new_alert");
+      socket.off("alert_status");
     };
   }, []);
+
+  const getEventIcon = (event) => {
+    switch (event) {
+      case "dialog_shown": return "🔒";
+      case "password_failed": return "❌";
+      case "password_success": return "✅";
+      case "dialog_dismissed": return "🔓";
+      default: return "ℹ️";
+    }
+  };
+
+  const getEventColor = (event) => {
+    switch (event) {
+      case "dialog_shown": return "#f59e0b";
+      case "password_failed": return "#ef4444";
+      case "password_success": return "#22c55e";
+      case "dialog_dismissed": return "#3b82f6";
+      default: return "#94a3b8";
+    }
+  };
 
   return (
     <div className="dashboard">
@@ -53,7 +79,46 @@ export default function AlertsPage() {
             <h4>Total Alerts</h4>
             <h2>{alerts.length}</h2>
           </div>
+          <div className="stat-card">
+            <h4>Agent Events</h4>
+            <h2>{agentEvents.length}</h2>
+          </div>
         </div>
+
+        {/* Live Agent Events — real-time alert dialog status */}
+        {agentEvents.length > 0 && (
+          <div className="panel" style={{ marginBottom: "20px" }}>
+            <h3 style={{ display: "flex", alignItems: "center", gap: "8px" }}>
+              <span style={{ display: "inline-block", width: "8px", height: "8px", borderRadius: "50%", background: "#ef4444", animation: "pulse 1.5s infinite" }}></span>
+              Live Agent Events
+            </h3>
+            <div style={{
+              maxHeight: "220px", overflowY: "auto",
+              display: "flex", flexDirection: "column", gap: "6px",
+              padding: "8px 0"
+            }}>
+              {agentEvents.map((evt, i) => (
+                <div key={i} style={{
+                  display: "flex", alignItems: "center", gap: "12px",
+                  padding: "10px 14px",
+                  background: "rgba(15, 23, 42, 0.6)",
+                  borderRadius: "8px",
+                  borderLeft: `3px solid ${getEventColor(evt.event)}`,
+                  fontSize: "13px"
+                }}>
+                  <span style={{ fontSize: "18px" }}>{getEventIcon(evt.event)}</span>
+                  <div style={{ flex: 1 }}>
+                    <strong style={{ color: getEventColor(evt.event) }}>{evt.host_name}</strong>
+                    <span style={{ color: "#94a3b8", marginLeft: "8px" }}>{evt.label}</span>
+                  </div>
+                  <span style={{ color: "#475569", fontSize: "11px", whiteSpace: "nowrap" }}>
+                    {evt.time ? new Date(evt.time).toLocaleTimeString() : ""}
+                  </span>
+                </div>
+              ))}
+            </div>
+          </div>
+        )}
 
         {/* Alerts Table */}
         <div className="panel">

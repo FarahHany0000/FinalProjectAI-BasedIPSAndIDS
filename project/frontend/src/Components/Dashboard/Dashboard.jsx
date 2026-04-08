@@ -10,6 +10,7 @@ export default function Dashboard() {
   const [stats, setStats] = useState(null);
   const [hosts, setHosts] = useState([]);
   const [alerts, setAlerts] = useState([]);
+  const [agentEvents, setAgentEvents] = useState([]);
 
   const fetchData = async () => {
     try {
@@ -36,10 +37,15 @@ export default function Dashboard() {
       fetchData();
     });
 
+    socket.on("alert_status", (event) => {
+      setAgentEvents(prev => [event, ...prev].slice(0, 20));
+    });
+
     return () => {
       clearInterval(interval);
       socket.off("host_update");
       socket.off("new_alert");
+      socket.off("alert_status");
     };
   }, []);
 
@@ -137,6 +143,36 @@ export default function Dashboard() {
             </table>
           </div>
         </div>
+
+        {/* Agent Alert Events — real-time dialog status */}
+        {agentEvents.length > 0 && (
+          <div className="panel" style={{ marginBottom: "20px", borderLeft: "3px solid #ef4444" }}>
+            <h3 style={{ display: "flex", alignItems: "center", gap: "8px" }}>
+              <span style={{ display: "inline-block", width: "8px", height: "8px", borderRadius: "50%", background: "#ef4444", animation: "pulse 1.5s infinite" }}></span>
+              Live Agent Events
+            </h3>
+            <div style={{ maxHeight: "160px", overflowY: "auto", display: "flex", flexDirection: "column", gap: "4px", padding: "6px 0" }}>
+              {agentEvents.map((evt, i) => (
+                <div key={i} style={{
+                  display: "flex", alignItems: "center", gap: "10px",
+                  padding: "8px 12px", background: "rgba(15, 23, 42, 0.5)",
+                  borderRadius: "6px", fontSize: "12px"
+                }}>
+                  <span style={{ fontSize: "16px" }}>
+                    {evt.event === "dialog_shown" ? "🔒" : evt.event === "password_failed" ? "❌" : evt.event === "password_success" ? "✅" : "🔓"}
+                  </span>
+                  <strong style={{ color: evt.event === "password_failed" ? "#ef4444" : evt.event === "password_success" ? "#22c55e" : "#f59e0b" }}>
+                    {evt.host_name}
+                  </strong>
+                  <span style={{ color: "#94a3b8" }}>{evt.label}</span>
+                  <span style={{ marginLeft: "auto", color: "#475569", fontSize: "11px" }}>
+                    {evt.time ? new Date(evt.time).toLocaleTimeString() : ""}
+                  </span>
+                </div>
+              ))}
+            </div>
+          </div>
+        )}
 
         {/* Recent Activity */}
         <div className="panel">

@@ -47,9 +47,15 @@ except ImportError:
 
 _shutdown = False
 _prevention_paused = False          # Admin dismissed alert → pause prevention
+_alert_dialog_active = False        # Prevents double dialog spawning
 _last_prevention = {}               # {cmd_type: timestamp} — cooldown tracker
 _PREVENTION_COOLDOWN = 120          # seconds before same action can repeat
 _ADMIN_PASSWORD = "admin123"        # Password to dismiss alert & reset prevention
+
+# Backend info for alert dialog reporting (set in run_agent)
+_backend_base_url = ""
+_current_agent_id = ""
+_current_host_name = ""
 
 
 def _handle_signal(signum, frame):
@@ -712,11 +718,18 @@ def _do_alert_user(reason):
     Show a security alert dialog with admin password option.
     Tries modern HTML dialog (pywebview) first, falls back to tkinter.
     Runs in a separate thread so it doesn't block the agent loop.
+    Prevents double dialog spawning via _alert_dialog_active flag.
     """
-    global _prevention_paused
+    global _prevention_paused, _alert_dialog_active
+
+    if _alert_dialog_active:
+        print("[ALERT] Dialog already active — skipping duplicate")
+        return True  # Return True to prevent re-queuing
+
+    _alert_dialog_active = True
 
     def _show_dialog():
-        global _prevention_paused
+        global _prevention_paused, _alert_dialog_active
 
         # ── Try modern HTML dialog via subprocess ──
         try:
@@ -724,15 +737,21 @@ def _do_alert_user(reason):
             if os.path.exists(script):
                 env = os.environ.copy()
                 env["_IDS_ADMIN_PW"] = _ADMIN_PASSWORD
-                result = subprocess.run(
-                    [sys.executable, script, "--reason", reason],
-                    env=env,
-                    timeout=300,
-                )
+                cmd = [sys.executable, script, "--reason", reason]
+                # Pass backend info for event reporting
+                if _backend_base_url:
+                    backend_root = _backend_base_url.replace("/api/agent", "")
+                    cmd.extend(["--backend-url", backend_root])
+                if _current_agent_id:
+                    cmd.extend(["--agent-id", _current_agent_id])
+                if _current_host_name:
+                    cmd.extend(["--host-name", _current_host_name])
+                result = subprocess.run(cmd, env=env, timeout=300)
                 if result.returncode == 0:
                     _prevention_paused = True
                     _do_reset_prevention()
                     print("[ALERT] ✓ Admin authenticated — prevention paused & reset")
+                _alert_dialog_active = False
                 return
         except Exception as e:
             print(f"[ALERT] Modern dialog unavailable ({e}), using tkinter fallback")
@@ -815,6 +834,8 @@ def _do_alert_user(reason):
             )
         except Exception as e:
             print(f"[PREVENT] ✗ Alert dialog error: {e}")
+
+        _alert_dialog_active = False  # Always reset flag when dialog finishes
 
     # Run in thread so it doesn't block the agent loop
     t = threading.Thread(target=_show_dialog, daemon=True)
@@ -1097,9 +1118,16 @@ def run_agent():
     base_url = f"http://{server_host}:{server_port}/api/agent"
     report_url = f"http://{server_host}:{server_port}{endpoint}"
 
+    # Set module-level backend info for alert dialog reporting
+    global _backend_base_url, _current_agent_id, _current_host_name
+
     host_name = socket.gethostname()
     agent_id = get_or_create_agent_id()
     hardware_id = _get_hardware_fingerprint(agent_key)
+
+    _backend_base_url = base_url
+    _current_agent_id = agent_id
+    _current_host_name = host_name
 
     # Reuse TCP connection — one persistent session, no noise
     session = requests.Session()
