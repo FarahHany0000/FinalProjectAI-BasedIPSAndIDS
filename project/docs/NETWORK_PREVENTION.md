@@ -119,55 +119,118 @@ Different attack severities have different blocking speeds:
 ## Per-Attack Prevention Details
 
 ### SYN Flood (AI Model | Critical)
-| Step | Action |
-|------|--------|
-| Detection | AI model identifies high SYN flag ratio in 10-packet window |
-| Severity | **Critical** — blocks after 3 alerts |
-| Prevention | `netsh advfirewall firewall add rule name=IDS_BLOCK_{IP}_IN dir=in action=block remoteip={IP}` |
-| Effect | All TCP SYN packets from attacker silently dropped, handshake impossible |
+| Parameter | Value |
+|-----------|-------|
+| **Detection Method** | AI XGBoost model — identifies high TCP SYN flag ratio in 10-packet window |
+| **Severity** | Critical |
+| **Rate Limit Window** | 60 seconds (sliding window) |
+| **Alerts Before Block** | 3 alerts within 60 seconds |
+| **Estimated Time to Block** | ~1-3 seconds (SYN flood sends 10,000+ pkts/sec → fills windows instantly) |
+| **Firewall Rule** | `netsh advfirewall firewall add rule name=IDS_BLOCK_{IP}_IN dir=in action=block remoteip={IP} protocol=any` |
+| **Firewall Rule (OUT)** | `netsh advfirewall firewall add rule name=IDS_BLOCK_{IP}_OUT dir=out action=block remoteip={IP} protocol=any` |
+| **Effect** | All TCP SYN packets from attacker silently dropped — TCP handshake impossible, connection timeouts |
+| **Why Critical?** | SYN flood exhausts server resources immediately — every second counts |
 
 ### Port Scan (AI Model | Medium)
-| Step | Action |
-|------|--------|
-| Detection | AI model detects connections to many different destination ports |
-| Severity | **Medium** — blocks after 15 alerts |
-| Prevention | Firewall blocks ALL inbound from scanner IP |
-| Effect | Scanner sees all ports as "filtered", reconnaissance becomes useless |
+| Parameter | Value |
+|-----------|-------|
+| **Detection Method** | AI XGBoost model — detects connections to many different destination ports |
+| **Severity** | Medium |
+| **Rate Limit Window** | 60 seconds (sliding window) |
+| **Alerts Before Block** | 15 alerts within 60 seconds |
+| **Estimated Time to Block** | ~5-15 seconds depending on scan speed (nmap --min-rate 500 → ~5s) |
+| **Firewall Rule** | Both IN + OUT rules blocking all traffic from scanner IP |
+| **Effect** | Scanner sees all ports as "filtered", reconnaissance becomes useless |
+| **Why Medium?** | Port scanning is reconnaissance — not immediately destructive, admin should see it first |
 
 ### SSH Brute Force (AI Model | High)
-| Step | Action |
-|------|--------|
-| Detection | AI model detects repeated TCP connections to port 22 with brute force pattern |
-| Severity | **High** — blocks after 10 alerts |
-| Prevention | Firewall blocks ALL inbound from attacker IP |
-| Effect | SSH connections time out, brute force impossible |
-| Smart Filter | Normal SSH sessions (server responses with src_port=22) are **NOT** flagged |
+| Parameter | Value |
+|-----------|-------|
+| **Detection Method** | AI XGBoost model — detects repeated TCP connections to port 22 with brute force pattern |
+| **Severity** | High |
+| **Rate Limit Window** | 60 seconds (sliding window) |
+| **Alerts Before Block** | 10 alerts within 60 seconds |
+| **Estimated Time to Block** | ~10-25 seconds (hydra -t 16 → generates ~10 windows in 20s) |
+| **Firewall Rule** | Both IN + OUT rules blocking all traffic from attacker IP |
+| **Effect** | SSH connections from attacker time out, brute force impossible |
+| **Smart Filter** | Normal SSH sessions (server responses with src_port=22) are **NOT** flagged — only incoming attack traffic (dst_port=22) triggers detection |
+| **Why High (not Critical)?** | Brute force needs many attempts to succeed — 10 alerts gives admin ~20s to see "SSHBrute" on dashboard before block |
 
 ### FTP Brute Force (AI Model | High)
-| Step | Action |
-|------|--------|
-| Detection | AI model detects repeated TCP connections to port 21 |
-| Severity | **High** — blocks after 10 alerts |
-| Prevention | Firewall blocks ALL inbound from attacker IP |
-| Effect | FTP connections time out, brute force impossible |
-| Smart Filter | Normal FTP responses (src_port=21) are **NOT** flagged |
+| Parameter | Value |
+|-----------|-------|
+| **Detection Method** | AI XGBoost model — detects repeated TCP connections to port 21 |
+| **Severity** | High |
+| **Rate Limit Window** | 60 seconds (sliding window) |
+| **Alerts Before Block** | 10 alerts within 60 seconds |
+| **Estimated Time to Block** | ~10-25 seconds (similar to SSH brute force) |
+| **Firewall Rule** | Both IN + OUT rules blocking all traffic from attacker IP |
+| **Effect** | FTP connections from attacker time out, brute force impossible |
+| **Smart Filter** | Normal FTP responses (src_port=21) are **NOT** flagged |
+| **Why High?** | Same reasoning as SSHBrute — admin needs time to see detection |
 
 ### ARP Spoofing (AI Model | Critical)
-| Step | Action |
-|------|--------|
-| Detection | AI model detects abnormal ARP reply patterns (separate ARP buffer) |
-| Severity | **Critical** — blocks after 3 alerts |
-| Prevention | Firewall blocks ALL IP traffic from attacker |
-| Limitation | ARP is Layer 2; firewall (Layer 3) blocks IP traffic but not raw ARP frames |
-| Note | Full ARP protection requires static ARP entries or 802.1X port security |
-| Buffer | ARP packets are processed in a **separate buffer** from TCP/IP to prevent contamination |
+| Parameter | Value |
+|-----------|-------|
+| **Detection Method** | AI XGBoost model — detects abnormal ARP reply patterns in **separate ARP buffer** |
+| **Severity** | Critical |
+| **Rate Limit Window** | 60 seconds (sliding window) |
+| **Alerts Before Block** | 3 alerts within 60 seconds |
+| **Estimated Time to Block** | ~15-20 seconds (arpspoof sends ~1 pkt/sec → ARP buffer timeout flushes every 5s → 3 windows = ~15s) |
+| **ARP Buffer** | ARP packets go to a separate buffer from TCP/IP with 5-second timeout flush (minimum 2 packets) |
+| **Firewall Rule** | Both IN + OUT rules blocking all IP traffic from attacker |
+| **Effect** | All IP-level communication with attacker blocked |
+| **Limitation** | ARP is Layer 2; Windows Firewall works at Layer 3 — blocks IP traffic but raw ARP frames may still arrive |
+| **Full Protection** | Requires static ARP entries (`arp -s`) or 802.1X port security at switch level |
+| **Why Critical?** | ARP spoofing enables man-in-the-middle attacks — all network traffic can be intercepted |
 
 ### ICMP Flood (Heuristic Rule | High)
-| Step | Action |
-|------|--------|
-| Detection | Heuristic: ≥ 8 ICMP packets AND ratio ≥ 60% in window |
-| Severity | **High** — blocks after 10 alerts |
-| Prevention | Firewall blocks ALL inbound from attacker IP |
+| Parameter | Value |
+|-----------|-------|
+| **Detection Method** | Heuristic rule: ICMP packet count ≥ 8 AND ICMP ratio ≥ 60% in window |
+| **Confidence** | Fixed at 0.92 (rule-based, not model prediction) |
+| **Severity** | High |
+| **Rate Limit Window** | 60 seconds (sliding window) |
+| **Alerts Before Block** | 10 alerts within 60 seconds |
+| **Estimated Time to Block** | ~1-3 seconds (ICMP flood sends 100,000+ pkts/sec → fills windows instantly) |
+| **Firewall Rule** | Both IN + OUT rules blocking all traffic from attacker IP |
+| **Effect** | All ICMP (ping) and other traffic from attacker is dropped |
+| **Why Heuristic?** | ICMP Flood was not in the AI training dataset — detected by packet counting rule |
+
+### DDoS UDP (Heuristic Rule | Critical)
+| Parameter | Value |
+|-----------|-------|
+| **Detection Method** | Heuristic rule: UDP ratio ≥ 50%, ≥ 12 packets, ≥ 3 unique destination ports |
+| **Confidence** | Fixed at 0.90 (rule-based) |
+| **Severity** | Critical |
+| **Rate Limit Window** | 60 seconds (sliding window) |
+| **Alerts Before Block** | 3 alerts within 60 seconds |
+| **Estimated Time to Block** | ~1-5 seconds depending on flood rate |
+| **Firewall Rule** | Both IN + OUT rules blocking all traffic from attacker IP |
+| **Note** | In distributed DDoS, each source IP must be blocked individually |
+| **Why Heuristic?** | DDoS UDP was not in the AI training dataset |
+
+### DDoS RAW (Heuristic Rule | Critical)
+| Parameter | Value |
+|-----------|-------|
+| **Detection Method** | Heuristic rule: ≥ 15 packets with protocol entropy ≥ 1.0 (mixed protocols) |
+| **Confidence** | Fixed at 0.88 (rule-based) |
+| **Severity** | Critical |
+| **Rate Limit Window** | 60 seconds (sliding window) |
+| **Alerts Before Block** | 3 alerts within 60 seconds |
+| **Firewall Rule** | Both IN + OUT rules blocking all traffic from attacker IP |
+| **Why Heuristic?** | DDoS RAW was not in the AI training dataset |
+
+### DDoS General (Heuristic Rule | Critical)
+| Parameter | Value |
+|-----------|-------|
+| **Detection Method** | Heuristic rule: ≥ 18 packets, ≥ 4 unique destination ports across TCP+UDP |
+| **Confidence** | Fixed at 0.87 (rule-based) |
+| **Severity** | Critical |
+| **Rate Limit Window** | 60 seconds (sliding window) |
+| **Alerts Before Block** | 3 alerts within 60 seconds |
+| **Firewall Rule** | Both IN + OUT rules blocking all traffic from attacker IP |
+| **Why Heuristic?** | General DDoS pattern not in AI training dataset |
 | Effect | All ICMP (ping) from attacker is dropped |
 
 ### DDoS UDP (Heuristic Rule | Critical)
