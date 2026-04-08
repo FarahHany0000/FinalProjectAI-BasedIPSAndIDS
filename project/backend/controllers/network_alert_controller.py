@@ -4,8 +4,41 @@ from models.alert import Alert
 from datetime import datetime
 import time
 import threading
+import socket
 
 _block_lock = threading.Lock()
+
+
+def _get_local_ips():
+    """Get all local IP addresses for this machine (never block these)."""
+    local_ips = {"127.0.0.1", "0.0.0.0"}
+    try:
+        hostname = socket.gethostname()
+        for info in socket.getaddrinfo(hostname, None, socket.AF_INET):
+            local_ips.add(info[4][0])
+    except Exception:
+        pass
+    try:
+        s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+        s.connect(("8.8.8.8", 80))
+        local_ips.add(s.getsockname()[0])
+        s.close()
+    except Exception:
+        pass
+    return local_ips
+
+
+def _is_protected_ip(ip: str) -> bool:
+    """Never block local machine IPs or common gateway addresses."""
+    if not ip:
+        return True
+    if ip in _get_local_ips():
+        return True
+    # Common gateway patterns (.1 and .254 in last octet)
+    parts = ip.split(".")
+    if len(parts) == 4 and parts[3] in ("1", "254", "0", "255"):
+        return True
+    return False
 
 
 class NetworkAlertController:
@@ -41,13 +74,14 @@ class NetworkAlertController:
     _ip_alert_history = {}
     RATE_LIMIT_WINDOW = 60    # seconds
 
-    # Severity-based thresholds: Critical=1 (instant), High=2, Medium=5
+    # Severity-based thresholds: Critical=3, High=10, Medium=15
+    # Higher thresholds give the admin time to see detections on the dashboard
     RATE_LIMIT_BY_SEVERITY = {
-        "Critical": 1,
-        "High": 2,
-        "Medium": 5,
+        "Critical": 3,
+        "High": 10,
+        "Medium": 15,
     }
-    RATE_LIMIT_MAX = 5        # default fallback
+    RATE_LIMIT_MAX = 10       # default fallback
 
     @staticmethod
     def process_network_detection(payload: dict) -> dict:
@@ -65,12 +99,19 @@ class NetworkAlertController:
             severity = NetworkAlertController.SEVERITY_MAP.get(attack_type, "Medium")
             action = NetworkAlertController.ACTION_MAP.get(attack_type, "Alert")
 
-            # Auto-block check
+            # Verbose console logging
+            blocked_tag = ""
+
+            # Auto-block check — block ATTACKER (src) only, never block our own IPs
             is_blocked = False
-            if src_ip:
-                is_blocked = NetworkAlertController._auto_block_check(src_ip, attack_type)
+            block_ip = src_ip
+            if _is_protected_ip(src_ip) and dst_ip and not _is_protected_ip(dst_ip):
+                block_ip = dst_ip  # src is us/gateway, block the other side
+            if block_ip and not _is_protected_ip(block_ip):
+                is_blocked = NetworkAlertController._auto_block_check(block_ip, attack_type)
                 if is_blocked:
                     action = f"AUTO-BLOCKED ({action})"
+                    blocked_tag = " ⛔ BLOCKED"
 
             alert = Alert(
                 source_type="network",
@@ -93,6 +134,10 @@ class NetworkAlertController:
             db.session.commit()
 
             socketio.emit("new_alert", alert.to_dict())
+
+            # Console output for every detection
+            print(f"[ALERT] {severity:<8} | {attack_type:<15} | conf={confidence:.3f} "
+                  f"| {src_ip}→{dst_ip} | {n_packets} pkts{blocked_tag}")
 
             return {
                 "status": "success",

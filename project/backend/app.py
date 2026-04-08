@@ -153,6 +153,7 @@ def _start_network_sensor(app):
     global _network_agent
 
     def _sensor_thread():
+        global _network_agent
         try:
             import sys
             import pathlib

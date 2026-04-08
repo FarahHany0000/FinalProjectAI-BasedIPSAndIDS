@@ -10,10 +10,30 @@ import queue
 import time
 import sys
 import pathlib
+import socket
 
 sys.path.insert(0, str(pathlib.Path(__file__).resolve().parent.parent))
 from config.settings import WINDOW_SIZE, WINDOW_TIMEOUT, DEFAULT_IFACE
 from sniffer.packet_parser import parse_scapy_packet, packets_to_feature_vector
+
+
+def _get_local_ips():
+    """Get all local IP addresses — traffic FROM these IPs is outbound, not attacks."""
+    local_ips = {"127.0.0.1", "0.0.0.0"}
+    try:
+        hostname = socket.gethostname()
+        for info in socket.getaddrinfo(hostname, None, socket.AF_INET):
+            local_ips.add(info[4][0])
+    except Exception:
+        pass
+    try:
+        s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+        s.connect(("8.8.8.8", 80))
+        local_ips.add(s.getsockname()[0])
+        s.close()
+    except Exception:
+        pass
+    return local_ips
 
 
 class LiveSniffer:
@@ -37,6 +57,9 @@ class LiveSniffer:
         self.bpf_filter = bpf_filter
 
         self.packet_buffer = []
+        self._arp_buffer = []  # Separate buffer for ARP packets
+        self._arp_flush_time = time.time()
+        self._local_ips = _get_local_ips()
         self.result_queue = queue.Queue(maxsize=10000)
         self.running = False
         self._thread = None
@@ -140,6 +163,21 @@ class LiveSniffer:
 
             src_ip, dst_ip, src_port, dst_port = self._extract_flow_metadata(parsed_packets)
 
+            # Skip outbound traffic from THIS machine — not an attack on us
+            if src_ip in self._local_ips and label != "Normal":
+                self.stats["total_windows"] += 1
+                self.stats["normal_count"] += 1
+                return
+
+            # Skip SSH/FTP SERVER RESPONSES — src_port=22 means it's a server
+            # replying, not an attacker initiating brute force (dst_port=22 is attack)
+            if label in ("SSHBrute", "FTPBrute"):
+                svc_port = 22 if label == "SSHBrute" else 21
+                if src_port == svc_port and dst_port != svc_port:
+                    self.stats["total_windows"] += 1
+                    self.stats["normal_count"] += 1
+                    return
+
             result = {
                 "timestamp": time.strftime("%Y-%m-%d %H:%M:%S"),
                 "label": label,
@@ -156,6 +194,8 @@ class LiveSniffer:
             if label != "Normal":
                 self.stats["attacks_detected"] += 1
                 result["alert"] = True
+                print(f"[Sniffer] 🔴 DETECTED: {label} | conf={conf:.3f} "
+                      f"| {src_ip}→{dst_ip} | {len(parsed_packets)} pkts")
             else:
                 self.stats["normal_count"] += 1
                 result["alert"] = False
@@ -172,24 +212,49 @@ class LiveSniffer:
             return
 
         try:
+            from scapy.all import ARP as ARP_Layer
+
             parsed = parse_scapy_packet(pkt)
             parsed['_arrival_time'] = time.time()
-            self.packet_buffer.append(parsed)
             self.stats["total_packets"] += 1
 
-            # Check if window is full
-            if len(self.packet_buffer) >= WINDOW_SIZE:
-                window = self.packet_buffer[:WINDOW_SIZE]
-                self.packet_buffer = self.packet_buffer[WINDOW_SIZE:]
-                self._last_flush_time = time.time()
-                self._process_window(window)
+            # Separate ARP and TCP/IP into different buffers to prevent
+            # ARP resolution traffic from contaminating attack windows
+            is_arp = pkt.haslayer(ARP_Layer)
+            now = time.time()
 
-            # Timeout flush for partial windows
-            elif (time.time() - self._last_flush_time) > WINDOW_TIMEOUT and len(self.packet_buffer) > 0:
-                window = self.packet_buffer[:]
-                self.packet_buffer = []
-                self._last_flush_time = time.time()
-                self._process_window(window)
+            if is_arp:
+                self._arp_buffer.append(parsed)
+                arp_len = len(self._arp_buffer)
+                arp_elapsed = now - self._arp_flush_time
+
+                if arp_len >= WINDOW_SIZE:
+                    window = self._arp_buffer[:WINDOW_SIZE]
+                    self._arp_buffer = self._arp_buffer[WINDOW_SIZE:]
+                    self._arp_flush_time = now
+                    print(f"[Sniffer] ARP window full ({len(window)} pkts), processing...")
+                    self._process_window(window)
+                # Timeout flush for partial ARP windows (arpspoof ~1 pkt/sec)
+                elif arp_elapsed > WINDOW_TIMEOUT and arp_len >= 2:
+                    window = self._arp_buffer[:]
+                    self._arp_buffer = []
+                    self._arp_flush_time = now
+                    print(f"[Sniffer] ARP timeout flush ({len(window)} pkts, {arp_elapsed:.1f}s elapsed)")
+                    self._process_window(window)
+            else:
+                self.packet_buffer.append(parsed)
+                if len(self.packet_buffer) >= WINDOW_SIZE:
+                    window = self.packet_buffer[:WINDOW_SIZE]
+                    self.packet_buffer = self.packet_buffer[WINDOW_SIZE:]
+                    self._last_flush_time = now
+                    self._process_window(window)
+
+                # Timeout flush for partial TCP/IP windows
+                elif (now - self._last_flush_time) > WINDOW_TIMEOUT and len(self.packet_buffer) > 0:
+                    window = self.packet_buffer[:]
+                    self.packet_buffer = []
+                    self._last_flush_time = now
+                    self._process_window(window)
 
         except Exception as e:
             print(f"[Sniffer] Packet error: {e}")
@@ -199,6 +264,7 @@ class LiveSniffer:
         try:
             from scapy.all import sniff
             print(f"[Sniffer] Started on interface: {self.iface}")
+            print(f"[Sniffer] Local IPs (whitelisted as src): {self._local_ips}")
             sniff(
                 iface=self.iface,
                 prn=self._packet_callback,
@@ -216,6 +282,8 @@ class LiveSniffer:
             return
         self.running = True
         self.packet_buffer = []
+        self._arp_buffer = []
+        self._arp_flush_time = time.time()
         self._last_flush_time = time.time()
         self._thread = threading.Thread(target=self._sniff_thread, daemon=True)
         self._thread.start()

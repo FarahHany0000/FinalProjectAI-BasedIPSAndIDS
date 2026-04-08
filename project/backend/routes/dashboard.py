@@ -321,7 +321,7 @@ def block_ip():
 
 @dashboard_bp.route("/api/network/prevention/unblock", methods=["POST"])
 def unblock_ip():
-    """Manually unblock an IP address."""
+    """Manually unblock an IP address — removes firewall rules + clears from list."""
     data = request.get_json()
     ip = data.get("ip")
     if not ip:
@@ -329,24 +329,41 @@ def unblock_ip():
 
     if ip in _runtime_config["blocked_ips"]:
         _runtime_config["blocked_ips"].remove(ip)
-        _remove_firewall_block(ip)
+    _remove_firewall_block(ip)  # always try to remove rules even if not in list
 
+    # Clear alert history for this IP so it doesn't re-block instantly
+    try:
+        NetworkAlertController._ip_alert_history.pop(ip, None)
+    except Exception:
+        pass
+
+    _save_persisted_config()
     socketio.emit("config_update", {"blocked_ips": _runtime_config["blocked_ips"]})
     return jsonify({"status": "unblocked", "ip": ip})
 
 
 @dashboard_bp.route("/api/network/prevention/reset", methods=["POST"])
 def reset_prevention():
-    """Remove all firewall rules and reset prevention state."""
+    """Remove all firewall rules and reset prevention state completely."""
     _remove_all_firewall_rules()
     _runtime_config["blocked_ips"] = []
-    _runtime_config["prevention_enabled"] = False
+    _runtime_config["prevention_enabled"] = True  # keep enabled, just clear blocks
+    _save_persisted_config()
+
+    # Clear auto-block alert history so counters start fresh
+    try:
+        NetworkAlertController._ip_alert_history.clear()
+    except Exception:
+        pass
 
     socketio.emit("config_update", {
-        "prevention_enabled": False,
+        "prevention_enabled": True,
         "blocked_ips": [],
     })
-    return jsonify({"status": "ok", "message": "All firewall rules removed, prevention disabled"})
+    return jsonify({
+        "status": "ok",
+        "message": "All firewall rules removed, blocked IPs cleared, system clean"
+    })
 
 
 # ── Archive ──
@@ -482,6 +499,7 @@ def _apply_firewall_block(ip: str):
 def _remove_firewall_block(ip: str):
     """Remove Windows Firewall rules for an IP (inbound + outbound)."""
     import subprocess
+    # Method 1: delete by known rule names
     for suffix in ("_IN", "_OUT", ""):
         rule_name = f"IDS_BLOCK_{ip.replace('.', '_')}{suffix}"
         try:
@@ -492,27 +510,54 @@ def _remove_firewall_block(ip: str):
             )
         except Exception:
             pass
+    # Method 2: delete ANY rule blocking this remoteip (catches all patterns)
+    for direction in ("in", "out"):
+        try:
+            subprocess.run(
+                ["netsh", "advfirewall", "firewall", "delete", "rule",
+                 "name=all", f"dir={direction}", f"remoteip={ip}"],
+                capture_output=True, text=True, timeout=10
+            )
+        except Exception:
+            pass
     print(f"[PREVENTION] Unblocked IP: {ip}")
 
 
 def _remove_all_firewall_rules():
-    """Remove all IDS-created firewall rules."""
+    """Remove ALL IDS/IPS firewall rules (network + host)."""
     import subprocess
+    removed = 0
+
+    # 1. Delete by known blocked IPs (most reliable)
+    for ip in list(_runtime_config.get("blocked_ips", [])):
+        _remove_firewall_block(ip)
+        removed += 1
+
+    # 2. Sweep by rule name pattern (catches orphaned rules)
     try:
-        # List all rules matching our naming pattern
         result = subprocess.run(
             ["netsh", "advfirewall", "firewall", "show", "rule", "name=all"],
             capture_output=True, text=True, timeout=15
         )
-        lines = result.stdout.split("\n")
-        for line in lines:
-            if "IDS_BLOCK_" in line:
+        for line in result.stdout.split("\n"):
+            if "IDS_BLOCK_" in line or "IPS_HOST_BLOCK_" in line:
                 rule_name = line.split(":")[-1].strip()
-                subprocess.run(
-                    ["netsh", "advfirewall", "firewall", "delete", "rule",
-                     f"name={rule_name}"],
-                    capture_output=True, text=True, timeout=10
-                )
-        print("[PREVENTION] All IDS firewall rules removed")
+                if rule_name:
+                    subprocess.run(
+                        ["netsh", "advfirewall", "firewall", "delete", "rule",
+                         f"name={rule_name}"],
+                        capture_output=True, text=True, timeout=10
+                    )
+                    removed += 1
     except Exception as e:
-        print(f"[PREVENTION] Failed to remove all rules: {e}")
+        print(f"[PREVENTION] Rule sweep error: {e}")
+
+    # 3. Also clear host-level blocks
+    try:
+        from utils.response_orchestrator import InsiderThreatResponseOrchestrator
+        host_removed = InsiderThreatResponseOrchestrator.remove_all_host_blocks()
+        removed += host_removed
+    except Exception as e:
+        print(f"[PREVENTION] Host block cleanup error: {e}")
+
+    print(f"[PREVENTION] Removed {removed} total firewall rules — system clean")
