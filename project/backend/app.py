@@ -169,13 +169,21 @@ def _start_network_sensor(app):
             # BPF filter to exclude noisy non-attack traffic
             bpf = "not port 53 and not port 1900 and not port 5353 and not port 57621 and not port 137 and not port 138 and not port 5000 and not port 67 and not port 68 and not port 5355 and not port 547 and not host 192.168.253.254 and not dst net 224.0.0.0/4"
 
+            # Get runtime thresholds from dashboard config
+            from routes.dashboard import _runtime_config
+            _threshold = _runtime_config.get("threshold", 0.70)
+            _class_threshold = _runtime_config.get("classification_threshold", 0.50)
+
             _network_agent = NetworkSensorAgent(
                 model_engine=net_model,
                 hostname="NetworkSensor-1",
                 backend_url="http://127.0.0.1:5000/api/agent/network-alert",
                 agent_key=app.config.get("AGENT_KEY", "changeme"),
                 bpf_filter=bpf,
+                threshold=_threshold,
+                classification_threshold=_class_threshold,
             )
+            print(f"[NetworkSensor-1] Thresholds: binary={_threshold}, classification={_class_threshold}")
             _network_agent.run_loop()
 
         except Exception as e:

@@ -34,7 +34,8 @@ class NetworkSensorAgent:
 
     def __init__(self, model_engine, iface: str = None, hostname: str = HOSTNAME,
                  backend_url: str = BACKEND_URL, agent_key: str = AGENT_KEY,
-                 bpf_filter: str = None):
+                 bpf_filter: str = None, threshold: float = None,
+                 classification_threshold: float = None):
         """
         Parameters
         ----------
@@ -44,13 +45,16 @@ class NetworkSensorAgent:
         backend_url : backend API endpoint for alerts
         agent_key : authentication key for backend
         bpf_filter : optional BPF filter string for Scapy sniff
+        threshold : Stage 1 binary threshold (default: from settings.py)
+        classification_threshold : Stage 2 classification threshold
         """
         self.model_engine = model_engine
         self.sniffer = LiveSniffer(
             engine=model_engine,
             iface=iface or DEFAULT_IFACE,
-            threshold=CONFIDENCE_THRESHOLD,
+            threshold=threshold if threshold is not None else CONFIDENCE_THRESHOLD,
             bpf_filter=bpf_filter,
+            classification_threshold=classification_threshold if classification_threshold is not None else 0.50,
         )
         self.hostname = hostname
         self.backend_url = backend_url

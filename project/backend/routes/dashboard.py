@@ -1,4 +1,5 @@
 import os
+import json
 import shutil
 import datetime
 from flask import Blueprint, jsonify, request
@@ -11,15 +12,48 @@ from extensions import db, socketio
 
 dashboard_bp = Blueprint("dashboard", __name__)
 
-# ── Runtime config (modifiable via API) ──
-_runtime_config = {
+# ── Threshold persistence ──
+_THRESHOLD_FILE = os.path.join(os.path.dirname(__file__), "..", "threshold_config.json")
+_DEFAULT_CONFIG = {
     "threshold": 0.70,
     "classification_threshold": 0.50,
     "prevention_enabled": True,
     "host_prevention_enabled": True,
     "blocked_ips": [],
-    "display_mode": "full",      # "full" = binary+classification, "binary" = binary only
+    "display_mode": "full",
 }
+
+def _load_persisted_config():
+    """Load thresholds from JSON file if it exists, else use defaults."""
+    config = dict(_DEFAULT_CONFIG)
+    try:
+        if os.path.exists(_THRESHOLD_FILE):
+            with open(_THRESHOLD_FILE, "r") as f:
+                saved = json.load(f)
+            for key in ("threshold", "classification_threshold", "display_mode"):
+                if key in saved:
+                    config[key] = saved[key]
+            print(f"[CONFIG] Loaded persisted thresholds: binary={config['threshold']}, "
+                  f"classification={config['classification_threshold']}")
+    except Exception as e:
+        print(f"[CONFIG] Could not load threshold file: {e}")
+    return config
+
+def _save_persisted_config():
+    """Save current thresholds to JSON file for persistence across restarts."""
+    try:
+        to_save = {
+            "threshold": _runtime_config["threshold"],
+            "classification_threshold": _runtime_config["classification_threshold"],
+            "display_mode": _runtime_config.get("display_mode", "full"),
+        }
+        with open(_THRESHOLD_FILE, "w") as f:
+            json.dump(to_save, f, indent=2)
+    except Exception as e:
+        print(f"[CONFIG] Could not save threshold file: {e}")
+
+# ── Runtime config (loads persisted values on startup) ──
+_runtime_config = _load_persisted_config()
 
 
 @dashboard_bp.route("/api/hosts", methods=["GET"])
@@ -211,8 +245,15 @@ def set_threshold():
         if _network_agent and hasattr(_network_agent, 'sniffer'):
             _network_agent.sniffer.threshold = _runtime_config["threshold"]
             _network_agent.sniffer.classification_threshold = _runtime_config["classification_threshold"]
-    except Exception:
-        pass
+            print(f"[THRESHOLD] Updated sniffer: binary={_runtime_config['threshold']}, "
+                  f"classification={_runtime_config['classification_threshold']}")
+        else:
+            print("[THRESHOLD] Warning: network agent not available for live update")
+    except Exception as e:
+        print(f"[THRESHOLD] Warning: could not push to sniffer: {e}")
+
+    # Persist thresholds to disk for next restart
+    _save_persisted_config()
 
     socketio.emit("config_update", {
         "threshold": _runtime_config["threshold"],

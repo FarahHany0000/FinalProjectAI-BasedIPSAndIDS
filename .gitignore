@@ -40,6 +40,7 @@ dist/
 
 # Runtime state
 prevention_runtime_state.json
+threshold_config.json
 
 # Simulation / testing artifacts
 *attack_simulation*
