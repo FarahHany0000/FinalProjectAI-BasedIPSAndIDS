@@ -104,7 +104,8 @@ ALERT_HTML = """<!DOCTYPE html>
 
   .close-btn {
     width: 30px; height: 30px;
-    display: flex; align-items: center; justify-content: center;
+    display: none;  /* HIDDEN — user cannot close without password */
+    align-items: center; justify-content: center;
     border: none; background: transparent;
     color: var(--dim); font-size: 15px; cursor: pointer;
     border-radius: 6px; transition: all 0.2s;
@@ -303,6 +304,7 @@ ALERT_HTML = """<!DOCTYPE html>
     <p class="reason-text" id="reason">{{REASON}}</p>
     <p class="sub-text">
       Your system activity has been flagged as suspicious.<br>
+      This screen is <strong style="color:var(--red)">LOCKED</strong> until admin authentication.<br>
       Contact your IT administrator immediately.
     </p>
 
@@ -318,8 +320,7 @@ ALERT_HTML = """<!DOCTYPE html>
     <p class="status-msg" id="status"></p>
 
     <div class="btn-row">
-      <button class="btn btn-ghost" onclick="doClose()">Acknowledge</button>
-      <button class="btn btn-danger" id="dismissBtn" onclick="doDismiss()">
+      <button class="btn btn-danger" id="dismissBtn" onclick="doDismiss()" style="flex:1">
         Admin Override
       </button>
     </div>
@@ -349,7 +350,11 @@ ALERT_HTML = """<!DOCTYPE html>
   }
 
   function doClose() {
-    withApi(function() { window.pywebview.api.close_dialog(); });
+    /* Blocked — user must enter admin password */
+    var stat = document.getElementById('status');
+    stat.className = 'status-msg error';
+    stat.textContent = '\u26D4 Enter admin password to dismiss this alert';
+    document.getElementById('pw').focus();
   }
 
   function doDismiss() {
@@ -444,16 +449,44 @@ def main():
     )
     html = ALERT_HTML.replace("{{REASON}}", reason_safe)
 
+    # Get screen dimensions for centering
+    try:
+        import ctypes
+        user32 = ctypes.windll.user32
+        screen_w = user32.GetSystemMetrics(0)
+        screen_h = user32.GetSystemMetrics(1)
+    except Exception:
+        screen_w, screen_h = 1920, 1080
+
+    win_w, win_h = 480, 560
+    x = (screen_w - win_w) // 2
+    y = (screen_h - win_h) // 2
+
+    def block_close():
+        """Prevent window from being closed without admin password."""
+        if api.authenticated:
+            return True  # allow close after auth
+        # Play error sound when they try to close
+        try:
+            import winsound
+            winsound.MessageBeep(winsound.MB_ICONHAND)
+        except Exception:
+            pass
+        return False  # block close
+
     window = webview.create_window(
         title="IDS/IPS — Threat Detected",
         html=html,
-        width=460,
-        height=540,
+        width=win_w,
+        height=win_h,
+        x=x,
+        y=y,
         resizable=False,
         on_top=True,
         frameless=True,
         js_api=api,
     )
+    window.events.closing += block_close
     api._window = window
 
     webview.start()
