@@ -397,6 +397,11 @@ def _net_snapshot():
 _known_drives = None      # Initialized on first call
 _usb_event_log = []       # Timestamped USB events for reporting
 
+# USB persistence: keep device weight active for multiple cycles after detection
+_usb_last_detection_time = 0
+_usb_cached_weight = 0
+_USB_PERSIST_SECONDS = 60   # seconds to keep USB weight after detection
+
 # Standard system drives to ignore (C: always present, etc.)
 _SYSTEM_DRIVES = {"C:"}
 
@@ -852,10 +857,11 @@ def collect_features(window_seconds=5):
     delta_connections = max(0, curr["connections"] - prev["connections"])
     delta_established = max(0, curr["established"] - prev["established"])
 
-    # Noise filter: < 10 new connections in 5s is normal background traffic
-    # (browsers, services, Windows updates, etc). Only count meaningful bursts.
-    # Attack simulations open 50-200+ sockets rapidly → easily exceeds 10.
-    LOGON_NOISE_THRESHOLD = 10
+    # Noise filter: normal background traffic (browsers, services, Windows
+    # updates, DNS, etc.) can create 20-70 new connections per 5s window in
+    # bursts.  Only count truly massive connection spikes as logon signals.
+    # Attack simulations open 50-200+ sockets rapidly → exceeds 50.
+    LOGON_NOISE_THRESHOLD = 50
     if delta_connections < LOGON_NOISE_THRESHOLD:
         delta_connections = 0
 
@@ -874,16 +880,36 @@ def collect_features(window_seconds=5):
     # ── Build 15 features in exact model order ──
     # CERT total_logons = daily login events (3-5 normal, 20+ attack).
     # Our delta_connections = new TCP connections per 5s window (0-15 normal).
-    # Normalize: divide by 5 to map to CERT daily scale.
-    #   Normal: delta 0-10 → logons 0-2 (matches CERT normal range)
-    #   Attack: delta 50-200 → logons 10-40 (matches CERT attack range)
-    LOGON_NORMALIZATION_FACTOR = 5.0
+    # Normalize: divide by 10 to map to CERT daily scale.
+    #   Normal: delta 0-49 → filtered to 0 → logons 0 (CERT normal)
+    #   Attack: delta 50-200 → logons 5-20 (CERT attack range)
+    LOGON_NORMALIZATION_FACTOR = 10.0
     total_logons = float(delta_connections) / LOGON_NORMALIZATION_FACTOR
 
     # CERT total_device_activities = USB/device operations (0-10 normal, 500+ attack)
     # DO NOT use network packets here — those are 300-600 normally and cause
     # massive false positives. Only USB events map to CERT device activities.
     total_device_activities = float(usb_device_weight) + float(usb_files_on_drive)
+
+    # ── USB persistence ──
+    # USB detection and file creation often happen on DIFFERENT cycles:
+    #   Cycle N: USB detected (device=200), files not yet created (files=0)
+    #   Cycle N+1: files appear (files=2204), USB already "old" (device=0)
+    # The model needs BOTH device + file features to classify as attack.
+    # Persist USB weight for 60s so it overlaps with file activity.
+    global _usb_last_detection_time, _usb_cached_weight
+    if new_drive_count > 0:
+        _usb_last_detection_time = time.time()
+        _usb_cached_weight = max(total_device_activities, 200.0)
+    if time.time() - _usb_last_detection_time < _USB_PERSIST_SECONDS:
+        total_device_activities = max(total_device_activities, _usb_cached_weight)
+
+    # ── File-based device inference ──
+    # Mass file operations (>100 files) indicate heavy disk I/O, which maps
+    # to CERT device_activities even without USB. The disk IS being used.
+    if recent_files > 100:
+        file_io_weight = min(float(recent_files) * 0.25, 500.0)
+        total_device_activities = max(total_device_activities, file_io_weight)
 
     # ── Feature Scaling ──
     # CERT data = DAILY aggregates across an employee's full workday (~8-10 hours).
@@ -904,7 +930,8 @@ def collect_features(window_seconds=5):
     #   Normal: files < 100, no USB → logon stays 0 (no inference) ✓
     #   Attack: files > 100 or USB → logon = max(observed, 2.0)  ✓
     ACTIVITY_LOGON_FLOOR = 2.0
-    if recent_files > 100 or new_drive_count > 0:
+    usb_active = new_drive_count > 0 or (time.time() - _usb_last_detection_time < _USB_PERSIST_SECONDS)
+    if recent_files > 100 or usb_active:
         total_logons = max(total_logons, ACTIVITY_LOGON_FLOOR)
 
     features = [
@@ -915,7 +942,7 @@ def collect_features(window_seconds=5):
         float(after_hours * total_logons),               # 4: after_hours_logons
         1.0,                                             # 5: unique_pcs_logon
         total_device_activities,                         # 6: total_device_activities
-        1.0 if new_drive_count > 0 else 0.0,            # 7: unique_pcs_device
+        1.0 if usb_active else 0.0,                     # 7: unique_pcs_device
         float(hour),                                     # 8: avg_device_hour
         float(after_hours * total_device_activities),    # 9: after_hours_device
         total_file_activities,                           # 10: total_file_activities
