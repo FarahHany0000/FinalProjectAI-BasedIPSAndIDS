@@ -318,7 +318,8 @@ class InsiderThreatResponseOrchestrator:
             after_hours_files = features[14]
 
             # USB / Device exfiltration detected
-            if total_device > 100 and after_hours_device > 50:
+            # Thresholds: CERT r4.2 scale — normal device=0-50, attack=200+
+            if total_device > 300 and after_hours_device > 150:
                 commands.append({
                     "type": "disable_usb",
                     "reason": f"Suspicious device activity ({int(total_device)} ops, {int(after_hours_device)} after-hours)",
@@ -332,7 +333,8 @@ class InsiderThreatResponseOrchestrator:
                 })
 
             # After-hours suspicious activity
-            if after_hours_logons > 3 or after_hours_files > 1000:
+            # Thresholds: logons = connection deltas (normal=0-5, attack=10+)
+            if after_hours_logons > 10 or after_hours_files > 1000:
                 commands.append({
                     "type": "lock_screen",
                     "reason": f"Suspicious after-hours activity (logons={int(after_hours_logons)}, files={int(after_hours_files)})",

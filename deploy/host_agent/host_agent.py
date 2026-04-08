@@ -808,6 +808,12 @@ def collect_features(window_seconds=5):
     """
     Collect 15 CERT features matching the proven Host LIVE Test.py approach.
     Uses network snapshots + recent file counting + USB drive monitoring.
+    
+    CERT r4.2 scale mapping:
+      - total_logons: NEW connections per window (not total open sockets)
+      - total_device_activities: packet delta + USB events
+      - total_file_activities: recently modified files in user dirs
+    
     Returns (features_list, extras_dict)
     """
     # Snapshot before
@@ -826,23 +832,45 @@ def collect_features(window_seconds=5):
     d_packets_recv = curr["packets_recv"] - prev["packets_recv"]
     total_packets = max(0, d_packets_sent + d_packets_recv)
 
+    # Connection delta (NEW connections this window, not total open sockets)
+    # CERT total_logons = login events (3-5 normal, 20+ attack)
+    # Raw psutil connections = 150-300 always → causes false positives
+    delta_connections = max(0, curr["connections"] - prev["connections"])
+    delta_established = max(0, curr["established"] - prev["established"])
+
+    # Noise filter: < 10 new connections in 5s is normal background traffic
+    # (browsers, services, Windows updates, etc). Only count meaningful bursts.
+    # Attack simulations open 50-200+ sockets rapidly → easily exceeds 10.
+    LOGON_NOISE_THRESHOLD = 10
+    if delta_connections < LOGON_NOISE_THRESHOLD:
+        delta_connections = 0
+
     # File activity — count recently modified files
     recent_files = _count_recent_files(300)
 
     # USB / removable device monitoring
     new_drive_count, new_drives, removed_drives = _detect_drive_changes()
-    # Each new drive = significant device activity (CERT treats USB connect as major event)
-    # Weight: 200 per new drive (approximates CERT r4.2 device activity scale)
     usb_device_weight = new_drive_count * 200
 
-    # Count files on newly connected drives (shows USB content volume)
+    # Count files on newly connected drives
     usb_files_on_drive = 0
     for drv in new_drives:
         usb_files_on_drive += _count_drive_files(drv)
 
     # ── Build 15 features in exact model order ──
-    total_logons = float(curr["connections"])
-    total_device_activities = float(total_packets) + float(usb_device_weight)
+    # CERT total_logons = daily login events (3-5 normal, 20+ attack).
+    # Our delta_connections = new TCP connections per 5s window (0-15 normal).
+    # Normalize: divide by 5 to map to CERT daily scale.
+    #   Normal: delta 0-10 → logons 0-2 (matches CERT normal range)
+    #   Attack: delta 50-200 → logons 10-40 (matches CERT attack range)
+    LOGON_NORMALIZATION_FACTOR = 5.0
+    total_logons = float(delta_connections) / LOGON_NORMALIZATION_FACTOR
+
+    # CERT total_device_activities = USB/device operations (0-10 normal, 500+ attack)
+    # DO NOT use network packets here — those are 300-600 normally and cause
+    # massive false positives. Only USB events map to CERT device activities.
+    total_device_activities = float(usb_device_weight) + float(usb_files_on_drive)
+
     total_file_activities = float(recent_files)
 
     features = [
@@ -853,7 +881,7 @@ def collect_features(window_seconds=5):
         float(after_hours * total_logons),               # 4: after_hours_logons
         1.0,                                             # 5: unique_pcs_logon
         total_device_activities,                         # 6: total_device_activities
-        1.0 if total_packets > 0 or new_drive_count > 0 else 0.0,  # 7: unique_pcs_device
+        1.0 if new_drive_count > 0 else 0.0,               # 7: unique_pcs_device
         float(hour),                                     # 8: avg_device_hour
         float(after_hours * total_device_activities),    # 9: after_hours_device
         total_file_activities,                           # 10: total_file_activities
@@ -866,7 +894,9 @@ def collect_features(window_seconds=5):
     extras = {
         "net_packets_delta": int(total_packets),
         "connections": curr["connections"],
+        "connections_delta": delta_connections,
         "established": curr["established"],
+        "established_delta": delta_established,
         "recent_files": recent_files,
         "is_after_hours": after_hours,
         "is_weekend": weekend,
@@ -1091,10 +1121,11 @@ def run_agent():
 
                 status_icon = "OK" if threat == "Normal" else "!!"
                 usb_info = f" usb={extras['usb_new_drives']}" if extras.get('usb_new_drives', 0) > 0 else ""
+                ah_tag = " [AH]" if extras.get('is_after_hours') else ""
                 print(
                     f"[{ts}] [{status_icon}] "
                     f"Threat={threat} | Action={action} | "
-                    f"conns={extras['connections']} pkts={extras['net_packets_delta']} files={extras['recent_files']}{usb_info}"
+                    f"logons={extras['connections_delta']} pkts={extras['net_packets_delta']} files={extras['recent_files']}{usb_info}{ah_tag}"
                 )
 
                 # Execute prevention commands from response (direct)
