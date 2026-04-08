@@ -120,6 +120,9 @@ def parse_scapy_packet(pkt) -> dict:
         arp = pkt[ARP]
         features["_src_ip"] = arp.psrc if arp.psrc else ""
         features["_dst_ip"] = arp.pdst if arp.pdst else ""
+        features["_arp_op"] = int(arp.op) if arp.op else 0  # 1=request, 2=reply
+        features["_arp_hwsrc"] = arp.hwsrc if arp.hwsrc else ""
+        features["_arp_hwdst"] = arp.hwdst if arp.hwdst else ""
 
     # Protocol encoding
     features["protocol_encoded"] = float(PROTOCOL_MAP.get(proto_name, 0))
@@ -144,7 +147,7 @@ def packets_to_feature_vector(packet_list: list) -> np.ndarray:
 
     # Create DataFrame from parsed packets (drop metadata cols that aren't numeric)
     df = pd.DataFrame(packet_list)
-    for col in ["_src_ip", "_dst_ip"]:
+    for col in ["_src_ip", "_dst_ip", "_arp_op", "_arp_hwsrc", "_arp_hwdst"]:
         if col in df.columns:
             df = df.drop(columns=[col])
 

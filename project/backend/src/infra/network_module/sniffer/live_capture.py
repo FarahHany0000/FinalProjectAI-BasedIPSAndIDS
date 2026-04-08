@@ -137,9 +137,60 @@ class LiveSniffer:
         # All other attacks → pure AI model prediction
         return model_label, model_conf
 
+    def _is_normal_arp(self, parsed_packets):
+        """
+        Detect normal ARP traffic (gateway resolution) vs ARP spoofing.
+        Normal ARP: few request/reply pairs, consistent MAC-IP bindings.
+        ARP Spoof: many unsolicited replies, MAC-IP inconsistencies.
+        Returns True if traffic looks normal (should skip detection).
+        """
+        if not parsed_packets:
+            return True
+
+        replies = [p for p in parsed_packets if p.get("_arp_op") == 2]
+        requests = [p for p in parsed_packets if p.get("_arp_op") == 1]
+
+        # Normal ARP: mostly requests, or balanced request/reply pairs
+        # Spoofing: overwhelmingly replies (unsolicited)
+        reply_ratio = len(replies) / len(parsed_packets) if parsed_packets else 0
+
+        # If mostly requests → normal gateway resolution
+        if reply_ratio < 0.5:
+            return True
+
+        # Check MAC-IP consistency: spoofing uses one MAC for multiple IPs
+        # or different MACs for the same IP
+        mac_ip_pairs = {}
+        for p in replies:
+            mac = p.get("_arp_hwsrc", "")
+            ip = p.get("_src_ip", "")
+            if ip and mac:
+                if ip not in mac_ip_pairs:
+                    mac_ip_pairs[ip] = set()
+                mac_ip_pairs[ip].add(mac)
+
+        # Multiple MACs claiming same IP = spoofing indicator
+        for ip, macs in mac_ip_pairs.items():
+            if len(macs) > 1:
+                return False  # Definite spoof indicator
+
+        # Few replies from known gateway → normal
+        # Many rapid unsolicited replies → suspicious
+        if len(replies) <= 3 and len(parsed_packets) <= 5:
+            return True
+
+        return False
+
     def _process_window(self, parsed_packets):
         """Process a window of packets through the model."""
         try:
+            # Check if this is an ARP-only window — apply smart filtering
+            is_arp_window = all(p.get("protocol_encoded") == 4.0 for p in parsed_packets)
+            if is_arp_window and self._is_normal_arp(parsed_packets):
+                self.stats["total_windows"] += 1
+                self.stats["normal_count"] += 1
+                return  # normal ARP traffic, skip
+
             # Skip slow-filling windows (background traffic, not attacks)
             # Real attacks send 100s-1000s of packets/sec; background ARP is ~1 pkt/min
             if len(parsed_packets) >= 2:
@@ -235,7 +286,8 @@ class LiveSniffer:
                     print(f"[Sniffer] ARP window full ({len(window)} pkts), processing...")
                     self._process_window(window)
                 # Timeout flush for partial ARP windows (arpspoof ~1 pkt/sec)
-                elif arp_elapsed > WINDOW_TIMEOUT and arp_len >= 2:
+                # Raised minimum to 5 to avoid false positives from normal ARP resolution
+                elif arp_elapsed > WINDOW_TIMEOUT and arp_len >= 5:
                     window = self._arp_buffer[:]
                     self._arp_buffer = []
                     self._arp_flush_time = now
