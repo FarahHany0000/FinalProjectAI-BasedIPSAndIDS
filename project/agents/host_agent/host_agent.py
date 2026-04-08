@@ -705,16 +705,36 @@ def _do_disable_usb():
 def _do_alert_user(reason):
     """
     Show a security alert dialog with admin password option.
-    If user enters correct admin password → pause prevention & reset.
+    Tries modern HTML dialog (pywebview) first, falls back to tkinter.
     Runs in a separate thread so it doesn't block the agent loop.
     """
     global _prevention_paused
 
     def _show_dialog():
         global _prevention_paused
+
+        # ── Try modern HTML dialog via subprocess ──
+        try:
+            script = os.path.join(os.path.dirname(os.path.abspath(__file__)), "alert_ui.py")
+            if os.path.exists(script):
+                env = os.environ.copy()
+                env["_IDS_ADMIN_PW"] = _ADMIN_PASSWORD
+                result = subprocess.run(
+                    [sys.executable, script, "--reason", reason],
+                    env=env,
+                    timeout=300,
+                )
+                if result.returncode == 0:
+                    _prevention_paused = True
+                    _do_reset_prevention()
+                    print("[ALERT] ✓ Admin authenticated — prevention paused & reset")
+                return
+        except Exception as e:
+            print(f"[ALERT] Modern dialog unavailable ({e}), using tkinter fallback")
+
+        # ── Fallback: tkinter dialog ──
         try:
             import tkinter as tk
-            from tkinter import messagebox
 
             root = tk.Tk()
             root.withdraw()
@@ -727,13 +747,11 @@ def _do_alert_user(reason):
             dialog.resizable(False, False)
             dialog.protocol("WM_DELETE_CLOSE", lambda: None)
 
-            # Center on screen
             dialog.update_idletasks()
             x = (dialog.winfo_screenwidth() // 2) - 210
             y = (dialog.winfo_screenheight() // 2) - 160
             dialog.geometry(f"+{x}+{y}")
 
-            # Warning icon + message
             tk.Label(dialog, text="⚠  Security Alert!", font=("Segoe UI", 16, "bold"),
                      fg="#c0392b").pack(pady=(15, 5))
             tk.Label(dialog, text=reason, font=("Segoe UI", 10),
@@ -742,10 +760,8 @@ def _do_alert_user(reason):
                      "Please contact your IT administrator.",
                      font=("Segoe UI", 9), fg="#555", wraplength=380, justify="center").pack(pady=5)
 
-            # Separator
             tk.Frame(dialog, height=1, bg="#ccc").pack(fill="x", padx=20, pady=10)
 
-            # Admin password section
             tk.Label(dialog, text="Admin / IT Password (to dismiss):",
                      font=("Segoe UI", 9)).pack()
             pw_var = tk.StringVar()
@@ -781,10 +797,8 @@ def _do_alert_user(reason):
 
             pw_entry.focus_set()
             pw_entry.bind("<Return>", lambda e: on_dismiss())
-
             dialog.mainloop()
         except ImportError:
-            # Fallback to simple MessageBox if tkinter not available
             MB_OK = 0x00000000
             MB_ICONWARNING = 0x00000030
             MB_TOPMOST = 0x00040000
@@ -871,7 +885,27 @@ def collect_features(window_seconds=5):
     # massive false positives. Only USB events map to CERT device activities.
     total_device_activities = float(usb_device_weight) + float(usb_files_on_drive)
 
-    total_file_activities = float(recent_files)
+    # ── Feature Scaling ──
+    # CERT data = DAILY aggregates across an employee's full workday (~8-10 hours).
+    # Our agent window = 5 seconds. If we see 2000 files in 5s, that's proportionally
+    # FAR more suspicious than 20000 files in a full day.
+    # Scale factor maps 5-second observations to CERT daily scale:
+    #   Normal: 3 files × 10 = 30  → CERT normal range (0-50)  ✓
+    #   Attack: 2000 files × 10 = 20000 → CERT attack range    ✓
+    FILE_ACTIVITY_SCALE = 10.0
+    total_file_activities = float(recent_files) * FILE_ACTIVITY_SCALE
+    scaled_unique_files = float(recent_files) * (FILE_ACTIVITY_SCALE * 0.75)
+
+    # ── Activity-based logon inference ──
+    # CERT model requires logon features to classify as attack. In real-world
+    # observation, connection deltas often miss attack sockets (opened before window).
+    # If we observe high file activity (>100 files) or USB usage, someone IS actively
+    # using the machine — infer a minimum logon count.
+    #   Normal: files < 100, no USB → logon stays 0 (no inference) ✓
+    #   Attack: files > 100 or USB → logon = max(observed, 2.0)  ✓
+    ACTIVITY_LOGON_FLOOR = 2.0
+    if recent_files > 100 or new_drive_count > 0:
+        total_logons = max(total_logons, ACTIVITY_LOGON_FLOOR)
 
     features = [
         total_logons,                                    # 0: total_logons
@@ -881,11 +915,11 @@ def collect_features(window_seconds=5):
         float(after_hours * total_logons),               # 4: after_hours_logons
         1.0,                                             # 5: unique_pcs_logon
         total_device_activities,                         # 6: total_device_activities
-        1.0 if new_drive_count > 0 else 0.0,               # 7: unique_pcs_device
+        1.0 if new_drive_count > 0 else 0.0,            # 7: unique_pcs_device
         float(hour),                                     # 8: avg_device_hour
         float(after_hours * total_device_activities),    # 9: after_hours_device
         total_file_activities,                           # 10: total_file_activities
-        float(recent_files),                             # 11: unique_files
+        scaled_unique_files,                             # 11: unique_files
         1.0 if recent_files > 0 else 0.0,               # 12: unique_pcs_file
         float(hour),                                     # 13: avg_file_hour
         float(after_hours * total_file_activities),      # 14: after_hours_files
