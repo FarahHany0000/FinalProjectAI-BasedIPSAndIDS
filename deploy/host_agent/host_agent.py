@@ -22,6 +22,7 @@ import time
 import uuid
 import signal
 import socket
+import string
 import platform
 import argparse
 import configparser
@@ -340,7 +341,7 @@ FEATURE_NAMES = [
 ]
 
 
-def _count_recent_files(max_age_seconds=300, max_scan_time=3):
+def _count_recent_files(max_age_seconds=300, max_scan_time=5):
     """
     Count files modified within the last N seconds in user home dirs.
     Caps scan time to avoid blocking on large directories.
@@ -361,9 +362,10 @@ def _count_recent_files(max_age_seconds=300, max_scan_time=3):
         for base, dirs, files in os.walk(scan_root):
             if time.time() > deadline:
                 return count
-            # Skip deep/hidden/large dirs
+            # Skip deep/hidden/large dirs that slow scanning
             dirs[:] = [d for d in dirs if not d.startswith('.') and d not in
-                       ('node_modules', '__pycache__', '.git', 'venv', '.venv')]
+                       ('node_modules', '__pycache__', '.git', 'venv', '.venv',
+                        'AppData', '.cache', 'site-packages')]
             for name in files:
                 try:
                     path = os.path.join(base, name)
@@ -386,6 +388,94 @@ def _net_snapshot():
         "connections": len(conns),
         "established": sum(1 for x in conns if x.status == "ESTABLISHED"),
     }
+
+
+# ─────────────────────────────────────────────────────────
+# USB / Removable Device Monitoring
+# ─────────────────────────────────────────────────────────
+
+_known_drives = None      # Initialized on first call
+_usb_event_log = []       # Timestamped USB events for reporting
+
+# Standard system drives to ignore (C: always present, etc.)
+_SYSTEM_DRIVES = {"C:"}
+
+
+def _get_all_drives():
+    """Get all current drive letters using Windows kernel32 API."""
+    if platform.system() != "Windows":
+        return set()
+    try:
+        bitmask = ctypes.windll.kernel32.GetLogicalDrives()
+        drives = set()
+        for i in range(26):
+            if bitmask & (1 << i):
+                letter = chr(ord('A') + i)
+                drives.add(f"{letter}:")
+        return drives
+    except Exception:
+        return set()
+
+
+def _get_drive_type(drive_letter):
+    """
+    Get drive type using Windows API.
+    Returns: 0=Unknown, 1=NoRoot, 2=Removable, 3=Fixed, 4=Network, 5=CDROM, 6=RAMDisk
+    """
+    if platform.system() != "Windows":
+        return 0
+    try:
+        return ctypes.windll.kernel32.GetDriveTypeW(f"{drive_letter}\\")
+    except Exception:
+        return 0
+
+
+def _detect_drive_changes():
+    """
+    Detect new/removed drives since last check.
+    Returns (new_count, new_drive_letters, removed_drive_letters).
+    First call initializes baseline — returns 0 new drives.
+    """
+    global _known_drives
+    current = _get_all_drives()
+
+    if _known_drives is None:
+        _known_drives = current
+        return 0, set(), set()
+
+    new_drives = current - _known_drives
+    removed = _known_drives - current
+    _known_drives = current
+
+    ts = datetime.now().strftime("%H:%M:%S")
+    for d in new_drives:
+        dtype = _get_drive_type(d)
+        type_name = {0: "Unknown", 1: "NoRoot", 2: "Removable", 3: "Fixed/Virtual",
+                     4: "Network", 5: "CDROM", 6: "RAMDisk"}.get(dtype, "?")
+        print(f"[{ts}] [USB-MONITOR] ⚠ New drive detected: {d}\\ (type={type_name})")
+        _usb_event_log.append({"time": ts, "drive": d, "type": type_name, "event": "connected"})
+
+    for d in removed:
+        print(f"[{ts}] [USB-MONITOR] Drive removed: {d}\\")
+        _usb_event_log.append({"time": ts, "drive": d, "event": "disconnected"})
+
+    return len(new_drives), new_drives, removed
+
+
+def _count_drive_files(drive_letter, max_files=5000, max_time=2):
+    """Count files on a drive (for USB content assessment). Capped by time and count."""
+    count = 0
+    deadline = time.time() + max_time
+    try:
+        for root, dirs, files in os.walk(f"{drive_letter}\\"):
+            if time.time() > deadline or count > max_files:
+                break
+            dirs[:] = [d for d in dirs if not d.startswith('.') and d != '$RECYCLE.BIN'
+                       and d != 'System Volume Information']
+            count += len(files)
+    except (PermissionError, OSError):
+        pass
+    return count
 
 
 # ─────────────────────────────────────────────────────────
@@ -717,7 +807,7 @@ def _do_alert_user(reason):
 def collect_features(window_seconds=5):
     """
     Collect 15 CERT features matching the proven Host LIVE Test.py approach.
-    Uses network snapshots + recent file counting (NOT raw disk I/O).
+    Uses network snapshots + recent file counting + USB drive monitoring.
     Returns (features_list, extras_dict)
     """
     # Snapshot before
@@ -729,19 +819,30 @@ def collect_features(window_seconds=5):
     curr = _net_snapshot()
     hour = now.hour
     weekend = 1 if now.weekday() >= 5 else 0
-    after_hours = 1 if (hour < 8 or hour > 18) else 0
+    after_hours = 1 if (hour < 8 or hour >= 18) else 0
 
     # Deltas
     d_packets_sent = curr["packets_sent"] - prev["packets_sent"]
     d_packets_recv = curr["packets_recv"] - prev["packets_recv"]
     total_packets = max(0, d_packets_sent + d_packets_recv)
 
-    # File activity — count recently modified files (same as "next try")
+    # File activity — count recently modified files
     recent_files = _count_recent_files(300)
+
+    # USB / removable device monitoring
+    new_drive_count, new_drives, removed_drives = _detect_drive_changes()
+    # Each new drive = significant device activity (CERT treats USB connect as major event)
+    # Weight: 200 per new drive (approximates CERT r4.2 device activity scale)
+    usb_device_weight = new_drive_count * 200
+
+    # Count files on newly connected drives (shows USB content volume)
+    usb_files_on_drive = 0
+    for drv in new_drives:
+        usb_files_on_drive += _count_drive_files(drv)
 
     # ── Build 15 features in exact model order ──
     total_logons = float(curr["connections"])
-    total_device_activities = float(total_packets)
+    total_device_activities = float(total_packets) + float(usb_device_weight)
     total_file_activities = float(recent_files)
 
     features = [
@@ -752,7 +853,7 @@ def collect_features(window_seconds=5):
         float(after_hours * total_logons),               # 4: after_hours_logons
         1.0,                                             # 5: unique_pcs_logon
         total_device_activities,                         # 6: total_device_activities
-        1.0 if total_packets > 0 else 0.0,              # 7: unique_pcs_device
+        1.0 if total_packets > 0 or new_drive_count > 0 else 0.0,  # 7: unique_pcs_device
         float(hour),                                     # 8: avg_device_hour
         float(after_hours * total_device_activities),    # 9: after_hours_device
         total_file_activities,                           # 10: total_file_activities
@@ -770,6 +871,10 @@ def collect_features(window_seconds=5):
         "is_after_hours": after_hours,
         "is_weekend": weekend,
         "hour": hour,
+        "usb_new_drives": len(new_drives),
+        "usb_removed_drives": len(removed_drives),
+        "usb_files_on_drive": usb_files_on_drive,
+        "usb_device_weight": usb_device_weight,
     }
 
     return features, extras
@@ -985,10 +1090,11 @@ def run_agent():
                 ts = datetime.now().strftime("%H:%M:%S")
 
                 status_icon = "OK" if threat == "Normal" else "!!"
+                usb_info = f" usb={extras['usb_new_drives']}" if extras.get('usb_new_drives', 0) > 0 else ""
                 print(
                     f"[{ts}] [{status_icon}] "
                     f"Threat={threat} | Action={action} | "
-                    f"conns={extras['connections']} pkts={extras['net_packets_delta']} files={extras['recent_files']}"
+                    f"conns={extras['connections']} pkts={extras['net_packets_delta']} files={extras['recent_files']}{usb_info}"
                 )
 
                 # Execute prevention commands from response (direct)

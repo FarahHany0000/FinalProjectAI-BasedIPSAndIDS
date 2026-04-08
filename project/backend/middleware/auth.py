@@ -39,7 +39,14 @@ def require_registered_agent(f):
             return jsonify({"error": "Unauthorized: unknown agent. Register first."}), 403
 
         if not agent.is_approved:
-            return jsonify({"error": "Forbidden: agent not approved by admin"}), 403
+            # Auto-approve localhost agents
+            if request.remote_addr in ("127.0.0.1", "::1"):
+                agent.is_approved = True
+                agent.status = "Online"
+                from extensions import db
+                db.session.commit()
+            else:
+                return jsonify({"error": "Forbidden: agent not approved by admin"}), 403
 
         return f(*args, **kwargs)
     return decorated

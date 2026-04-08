@@ -44,7 +44,9 @@ threshold_config.json
 
 # Simulation / testing artifacts
 *attack_simulation*
+!host_attack_simulation.py
 *simulation*
+!host_attack_simulation.py
 attacks_log.csv
 sim_results/
 project/backend/archive/

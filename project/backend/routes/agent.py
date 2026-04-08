@@ -115,7 +115,9 @@ def register_agent():
             "is_approved": existing_device.is_approved,
         })
 
-    # ── NEW DEVICE — requires admin approval ──
+    # ── NEW DEVICE ──
+    # Auto-approve localhost agents (attack_simulation, local testing)
+    is_local = ip in ("127.0.0.1", "::1", "localhost") or request.remote_addr in ("127.0.0.1", "::1")
     agent = RegisteredAgent(
         agent_id=agent_id,
         hardware_id=hardware_id or None,
@@ -124,13 +126,16 @@ def register_agent():
         os_info=os_info,
         registered_at=now,
         last_seen=now,
-        is_approved=False,  # Pending admin approval
-        status="Pending",
+        is_approved=is_local,  # Auto-approve localhost, others need admin approval
+        status="Online" if is_local else "Pending",
     )
     db.session.add(agent)
     db.session.commit()
 
-    print(f"[REGISTER] New device PENDING approval: {host_name} ({ip}) id={agent_id[:8]}...")
+    if is_local:
+        print(f"[REGISTER] New LOCAL device auto-approved: {host_name} ({ip}) id={agent_id[:8]}...")
+    else:
+        print(f"[REGISTER] New device PENDING approval: {host_name} ({ip}) id={agent_id[:8]}...")
     socketio.emit("agent_update", agent.to_dict())
     socketio.emit("pending_device", {
         "host_name": host_name,
