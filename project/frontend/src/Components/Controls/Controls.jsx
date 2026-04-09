@@ -81,7 +81,10 @@ export default function Controls() {
           });
         }
       }
-      if (hostLogsRes.ok) setHostLogs(await hostLogsRes.json());
+      if (hostLogsRes.ok) {
+        const logs = await hostLogsRes.json();
+        setHostLogs(logs.filter(l => l.decision_level && l.decision_level !== "NONE"));
+      }
     } catch (err) {
       console.error("Controls fetch error:", err);
     }
