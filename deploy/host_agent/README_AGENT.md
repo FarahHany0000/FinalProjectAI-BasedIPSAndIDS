@@ -1,32 +1,31 @@
 # IDS Host Agent — Deployment Package
-# دليل تثبيت عميل المراقبة + محاكاة الهجوم
 
-## 📦 محتويات المجلد
+## 📦 Package Contents
 
-| File | الوظيفة |
-|------|---------|
-| `host_agent.py` | الـ Agent الأساسي — بيراقب الجهاز ويبعت البيانات للسيرفر |
-| `alert_ui.py` | نافذة التحذير الأمني (بتقفل الشاشة لحد ما الأدمن يدخل الباسورد) |
-| `host_attack_simulation.py` | محاكاة هجمات للاختبار (6 أنواع مختلفة) |
-| `config.ini` | إعدادات الاتصال بالسيرفر |
-| `requirements.txt` | المكتبات المطلوبة |
-| `install_agent.py` | سكريبت التثبيت التلقائي |
+| File | Description |
+|------|-------------|
+| `host_agent.py` | Main monitoring agent — collects features and sends them to the server |
+| `alert_ui.py` | Security alert dialog (locks screen until admin password is entered) |
+| `host_attack_simulation.py` | Attack simulation for testing (6 different attack types) |
+| `config.ini` | Server connection settings |
+| `requirements.txt` | Python dependencies |
+| `install_agent.py` | Automated setup script |
 
 ---
 
-## 🚀 خطوات التشغيل (3 خطوات بس)
+## 🚀 Quick Start (3 Steps)
 
-### الخطوة 1: تثبيت البيئة
+### Step 1: Install the Environment
 
-**افتح CMD أو PowerShell في مجلد `host_agent` وشغّل:**
+**Open CMD or PowerShell in the `host_agent` folder and run:**
 
 ```bash
 python install_agent.py
 ```
 
-ده هيعمل كل حاجة تلقائي (venv + تثبيت المكتبات).
+This will automatically create a virtual environment and install all dependencies.
 
-**أو لو عايز تعمل يدوي:**
+**Or install manually:**
 ```bash
 cd host_agent
 python -m venv venv
@@ -34,35 +33,35 @@ venv\Scripts\activate
 pip install -r requirements.txt
 ```
 
-### الخطوة 2: ظبط IP السيرفر
+### Step 2: Configure the Server IP
 
-**مهم جداً:** افتح ملف `config.ini` وغيّر `server_host` لـ IP جهاز السيرفر:
+**Important:** Open `config.ini` and set `server_host` to the IP address of the server machine:
 
 ```ini
 [agent]
-server_host = 192.168.1.6       ; ← حط IP السيرفر هنا
+server_host = 192.168.1.6       ; <-- Put the server IP here
 server_port = 5000
 agent_key = changeme
 ```
 
-**إزاي تعرف IP السيرفر؟**
-- على جهاز السيرفر (اللي شغّال عليه الـ Backend): افتح CMD واكتب `ipconfig`
-- خد الـ IPv4 Address (مثلاً `192.168.1.6`)
-- لو الجهازين على نفس الشبكة، سيب `AUTO` وهيلاقيه لوحده
+**How to find the server IP:**
+- On the server machine (where the Backend is running): open CMD and type `ipconfig`
+- Copy the IPv4 Address (e.g. `192.168.1.6`)
+- If both machines are on the same network, you can leave `AUTO` and it will auto-discover
 
-### الخطوة 3: شغّل الـ Agent
+### Step 3: Run the Agent
 
 ```bash
 venv\Scripts\activate
 python host_agent.py
 ```
 
-**أو لو عايز تحدد السيرفر من الأمر مباشرة:**
+**Or specify the server directly:**
 ```bash
 python host_agent.py --server 192.168.1.6:5000
 ```
 
-**لو شغّال صح هتشوف كده:**
+**If everything is working correctly, you should see:**
 ```
 ==================================================
   Host IDS Agent
@@ -78,132 +77,134 @@ python host_agent.py --server 192.168.1.6:5000
 
 ---
 
-## 🌐 ربط الأجهزة ببعض (مهم!)
+## 🌐 Connecting Devices Together (Important!)
 
-### على جهاز السيرفر (عندك):
-1. شغّل الـ Backend: `python app.py` (من مجلد `project/backend`)
-2. شغّل الـ Frontend: `npm run dev` (من مجلد `project/frontend`)
-3. اعرف الـ IP بتاعك: `ipconfig` ← خد IPv4 Address
+### On the Server Machine (your machine):
+1. Start the Backend: `python app.py` (from `project/backend` folder)
+2. Start the Frontend: `npm run dev` (from `project/frontend` folder)
+3. Find your IP: run `ipconfig` in CMD → copy the IPv4 Address
 
-### على جهاز صاحبك:
-1. انسخ مجلد `host_agent` كله على جهازه (فلاشة أو Share)
-2. شغّل `python install_agent.py`
-3. عدّل `config.ini` ← حط IP جهازك (السيرفر)
-4. شغّل `python host_agent.py`
+### On the Client Machine (target):
+1. Copy the entire `host_agent` folder to the target machine (via USB or network share)
+2. Run `python install_agent.py`
+3. Edit `config.ini` → set the server's IP address
+4. Run `python host_agent.py`
 
-### شروط الاتصال:
-- **الجهازين لازم يكونوا على نفس الشبكة** (نفس الراوتر / Hotspot / LAN)
-- **Port 5000 لازم يكون مفتوح** على جهاز السيرفر
-- لو الـ Firewall بيمنع، افتح Port 5000:
+### Connection Requirements:
+- **Both machines must be on the same network** (same router / hotspot / LAN)
+- **Port 5000 must be open** on the server machine
+- If the firewall is blocking it, open Port 5000:
   ```bash
   netsh advfirewall firewall add rule name="IDS Backend" dir=in action=allow protocol=TCP localport=5000
   ```
 
-### طريقة سريعة للاختبار بدون راوتر:
-1. شغّل **Mobile Hotspot** من جهازك (Settings → Mobile Hotspot)
-2. وصّل جهاز صاحبك على الـ Hotspot
-3. استخدم IP الـ Hotspot (عادة `192.168.137.1`)
+### Quick Test Without a Router:
+1. Enable **Mobile Hotspot** on your machine (Settings → Mobile Hotspot)
+2. Connect the other machine to your hotspot
+3. Use the hotspot IP (usually `192.168.137.1`)
 
 ---
 
-## 🔒 إزاي الـ Agent بيشتغل
+## 🔒 How the Agent Works
 
-1. **أول تشغيل** ← بيعمل Hardware Fingerprint فريد للجهاز (CPU + MAC + Serial)
-2. **بيسجّل نفسه** في السيرفر تلقائي
-3. **كل 10 ثواني** بيجمع بيانات من الجهاز:
-   - نشاط الملفات (ملفات جديدة/معدّلة)
-   - USB/فلاشات
-   - اتصالات الشبكة
-   - أوقات الدخول
-4. **بيبعت** البيانات للـ AI Model (XGBoost) على السيرفر
-5. **لو اكتشف هجوم** ← السيرفر بيبعت أوامر حماية:
-   - 🔒 قفل الشاشة
-   - ⛔ تعطيل USB
-   - ⚠️ نافذة تحذير أمني (محتاجة باسورد أدمن)
-   - 🔪 إيقاف العمليات المشبوهة
-6. **الأدمن يدخل الباسورد** → كل حاجة ترجع عادي
+1. **First run** → Generates a unique Hardware Fingerprint (CPU + MAC + Disk Serial)
+2. **Registers** with the IDS backend server automatically
+3. **Every 10 seconds** — collects data from the machine:
+   - File activity (new/modified files)
+   - USB / removable device usage
+   - Network connections
+   - Login patterns and timing
+4. **Sends features** to the AI model (XGBoost) on the server
+5. **If an attack is detected** → The server sends prevention commands:
+   - 🔒 Lock screen
+   - ⛔ Disable USB storage
+   - ⚠️ Show security alert dialog (requires admin password to close)
+   - 🔪 Kill suspicious processes
+6. **Admin enters password** → Everything returns to normal
 
-### نافذة التحذير:
-- **مش هتقفل** بدون باسورد الأدمن
-- **فوق كل النوافذ** — مفيش حاجة تقدر تغطيها
-- باسورد الأدمن الافتراضي: `admin123`
+### Alert Dialog Behavior:
+- **Cannot be closed** without the admin password
+- **Always on top** — stays above all windows
+- **Centered on screen** — cannot be moved
+- Default admin password: `admin123`
 
 ---
 
-## 🎯 اختبار بمحاكاة الهجوم
+## 🎯 Testing with Attack Simulation
 
-**لازم الـ Agent يكون شغّال الأول!**
+**The agent MUST be running before starting the simulation!**
 
-افتح Terminal تاني وشغّل:
+Open a new terminal and run:
 ```bash
 venv\Scripts\activate
 python host_attack_simulation.py
 ```
 
-القائمة:
-| # | نوع الهجوم | الوصف |
-|---|-----------|-------|
-| 1 | 💾 Data Exfiltration | سرقة ملفات عبر USB |
-| 2 | 🔥 IT Sabotage | تدمير ملفات بالجملة |
-| 3 | 🕵️ Espionage | تجسس + وصول شبكي |
-| 4 | 💰 Fraud | وصول غير مصرح لبيانات مالية |
-| 5 | 🌐 System Abuse | إغراق الشبكة |
-| 6 | ☠️ Combined Attack | كل الهجمات مع بعض (أقوى سيناريو) |
-| 7 | 👤 Normal Baseline | نشاط عادي (المفروض ما يتكشفش) |
+### Available Attacks:
+| # | Attack Type | Description |
+|---|-------------|-------------|
+| 1 | 💾 Data Exfiltration | Copies files to a virtual USB drive |
+| 2 | 🔥 IT Sabotage | Mass file creation/deletion |
+| 3 | 🕵️ Espionage | IP theft + multi-PC network access |
+| 4 | 💰 Fraud | Unauthorized financial data access |
+| 5 | 🌐 System Abuse | Network flooding (mass connections) |
+| 6 | ☠️ Combined Attack | All attacks at once (maximum intensity) |
+| 7 | 👤 Normal Baseline | Normal activity (should NOT trigger detection) |
 
-> **آمن تماماً**: كل الملفات والتغييرات بتتنضف تلقائي بعد كل اختبار.
+> **Safe Mode**: All attacks are simulated — files, USB drives, and changes are automatically cleaned up after each test.
 
 ---
 
-## ⚙️ مرجع الإعدادات
+## ⚙️ Configuration Reference
 
 ### config.ini:
 ```ini
 [agent]
-server_host = 192.168.1.6   ; IP السيرفر (أو AUTO للبحث التلقائي)
-server_port = 5000           ; بورت السيرفر (ثابت)
-agent_key = changeme         ; مفتاح التوثيق (لازم يطابق السيرفر)
-interval = 10                ; ثواني بين كل فحص
-window = 5                   ; مدة جمع البيانات (ثواني)
+server_host = 192.168.1.6   ; Server IP (or AUTO for auto-discovery)
+server_port = 5000           ; Server port (fixed)
+agent_key = changeme         ; Authentication key (must match the server)
+interval = 10                ; Seconds between each detection cycle
+window = 5                   ; Feature collection window (seconds)
 ```
 
-### أوامر إضافية:
+### Command-line Overrides:
 ```bash
-python host_agent.py --server 192.168.1.6:5000    # تحديد سيرفر مباشرة
-python host_agent.py --interval 5                   # فحص كل 5 ثواني
+python host_agent.py --server 192.168.1.6:5000    # Specify server directly
+python host_agent.py --interval 5                   # Scan every 5 seconds
 ```
 
 ---
 
-## 🔧 حل المشاكل
+## 🔧 Troubleshooting
 
-| المشكلة | الحل |
-|---------|------|
-| `ConnectionError` | تأكد من IP السيرفر وإن Port 5000 مفتوح |
-| `Pending approval` | الأدمن لازم يوافق على الجهاز من الـ Dashboard |
-| الـ Alert بيظهر بدون سبب | ده false positive — أدخل الباسورد `admin123` |
-| `pip install` مش شغّال | تأكد إنك في الـ venv: `venv\Scripts\activate` |
-| pywebview مش شغّال | شغّل: `pip install pywebview>=4.0` |
-| `rejected` | امسح ملف `.agent_id` وأعد التشغيل |
-| الجهاز مش ظاهر في الـ Dashboard | تأكد إن الجهازين على نفس الشبكة |
-
----
-
-## 🛑 إيقاف الـ Agent
-اضغط `Ctrl+C` — بيقفل بأمان وبيرجّع كل إعدادات الحماية لوضعها الطبيعي.
+| Problem | Solution |
+|---------|----------|
+| `ConnectionError` | Check the server IP and make sure Port 5000 is open |
+| `Pending approval` | The admin must approve the device from the Dashboard |
+| Alert keeps appearing (false positive) | Enter the admin password: `admin123` |
+| `pip install` errors | Make sure you're in the venv: `venv\Scripts\activate` |
+| pywebview not working | Run: `pip install pywebview>=4.0` |
+| Agent says `rejected` | Delete the `.agent_id` file and restart the agent |
+| Device not showing in Dashboard | Make sure both machines are on the same network |
+| Agent can't find server (AUTO) | Set the exact IP in `config.ini` instead of AUTO |
 
 ---
 
-## 📋 المتطلبات
-- **Python 3.8+** (مجرّب على 3.12)
+## 🛑 Stopping the Agent
+Press `Ctrl+C` — the agent stops gracefully and resets all prevention actions (re-enables USB, etc.)
+
+---
+
+## 📋 Requirements
+- **Python 3.8+** (tested with 3.12)
 - **Windows 10/11**
-- اتصال شبكة بجهاز السيرفر
-- المكتبات: `psutil`, `requests`, `pywebview` (بتتثبت تلقائي)
+- Network connection to the IDS backend server
+- Dependencies (auto-installed): `psutil`, `requests`, `pywebview`
 
 ---
 
-## 🔐 ملاحظات أمنية
-- كل جهاز بيعمل **بصمة Hardware فريدة** — نسخ الملفات لجهاز تاني مش هيشتغل بنفس الـ ID
-- ملف `.agent_id` بيتعمل أوتوماتيك أول تشغيل — **متنسخوش** بين الأجهزة
-- باسورد الأدمن الافتراضي: `admin123`
-- مفتاح التوثيق `agent_key` لازم يكون نفسه في `config.ini` وفي السيرفر
+## 🔐 Security Notes
+- Each machine generates a **unique hardware fingerprint** — copying files to another machine won't reuse the same identity
+- The `.agent_id` file is generated on first run — **do NOT copy it** between machines
+- Default admin password: `admin123`
+- The `agent_key` in `config.ini` must match the server's AGENT_KEY

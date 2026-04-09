@@ -64,3 +64,5 @@ Thumbs.db
 *.swo
 
 project/training/
+
+deploy/host_agent/IDS_Host_Agent_Setup_Guide.docx
