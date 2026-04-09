@@ -25,10 +25,10 @@ instance/
 node_modules/
 dist/
 
-# Training data (large files - use project/training/ locally)
-*.pcap
+# Training data
 *.csv
 !project/training/**/*.csv
+!project/training/captures/*.pcap
 
 # Logs
 *.log
@@ -63,8 +63,4 @@ Thumbs.db
 *.swp
 *.swo
 
-project/training/
 
-deploy/host_agent/IDS_Host_Agent_Setup_Guide.docx
-
-project/docs/
