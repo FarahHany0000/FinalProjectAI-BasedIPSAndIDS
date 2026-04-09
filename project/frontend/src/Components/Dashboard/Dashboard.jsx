@@ -74,8 +74,8 @@ export default function Dashboard() {
   const onlineHosts = hosts.filter(h => isOnline(h.last_seen));
   const offlineHosts = hosts.filter(h => !isOnline(h.last_seen));
   const totalAlerts = stats?.total_alerts || 0;
-  const hostAlerts = alerts.filter(a => a.source_type === "host").length;
-  const networkAlerts = alerts.filter(a => a.source_type === "network").length;
+  const hostAlerts = stats?.host_alerts || 0;
+  const networkAlerts = stats?.network_alerts || 0;
 
   return (
     <div className="dashboard">
@@ -109,43 +109,47 @@ export default function Dashboard() {
           </div>
           <div className="stat-card">
             <h4><Shield size={16} style={{ marginRight: 6 }} /> Host Threats</h4>
-            {hostAlerts > 500 ? (
+            {hostAlerts > 100 ? (
               <div style={{ 
-                display: "flex", justifyContent: "center", alignItems: "center",
-                height: "60px"
+                display: "flex", flexDirection: "column", justifyContent: "center", alignItems: "center",
+                height: "60px", gap: "4px"
               }}>
                 <AlertTriangle 
-                  size={40} 
+                  size={36} 
                   style={{ 
                     color: "#ef4444", 
                     animation: "blink 1s ease-in-out infinite",
+                    filter: "drop-shadow(0 0 8px rgba(239,68,68,0.5))",
                   }} 
                 />
+                <span style={{ fontSize: "0.75rem", color: "#ef4444", fontWeight: 700, letterSpacing: "0.5px" }}>{hostAlerts}</span>
               </div>
             ) : (
               <p style={{ color: hostAlerts > 0 ? "#ef4444" : "#22c55e" }}>{hostAlerts}</p>
             )}
-            <span className="stat-sub">{hostAlerts > 500 ? `${hostAlerts} threats detected!` : "from device agents"}</span>
+            <span className="stat-sub">{hostAlerts > 100 ? "⚠ Critical threat level!" : "from device agents"}</span>
           </div>
           <div className="stat-card">
             <h4><AlertTriangle size={16} style={{ marginRight: 6 }} /> Network Threats</h4>
-            {networkAlerts > 500 ? (
+            {networkAlerts > 100 ? (
               <div style={{ 
-                display: "flex", justifyContent: "center", alignItems: "center",
-                height: "60px"
+                display: "flex", flexDirection: "column", justifyContent: "center", alignItems: "center",
+                height: "60px", gap: "4px"
               }}>
                 <AlertTriangle 
-                  size={40} 
+                  size={36} 
                   style={{ 
                     color: "#ef4444", 
                     animation: "blink 1s ease-in-out infinite",
+                    filter: "drop-shadow(0 0 8px rgba(239,68,68,0.5))",
                   }} 
                 />
+                <span style={{ fontSize: "0.75rem", color: "#ef4444", fontWeight: 700, letterSpacing: "0.5px" }}>{networkAlerts}</span>
               </div>
             ) : (
               <p style={{ color: networkAlerts > 0 ? "#ef4444" : "#22c55e" }}>{networkAlerts}</p>
             )}
-            <span className="stat-sub">{networkAlerts > 500 ? `${networkAlerts} threats detected!` : "from network traffic"}</span>
+            <span className="stat-sub">{networkAlerts > 100 ? "⚠ Critical threat level!" : "from network traffic"}</span>
           </div>
         </div>
 

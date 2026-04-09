@@ -29,6 +29,8 @@ class AlertController:
         online_hosts = Host.query.filter_by(status="Online").count()
         offline_hosts = Host.query.filter_by(status="Offline").count()
         total_alerts = Alert.query.count()
+        network_alerts = Alert.query.filter_by(source_type="network").count()
+        host_alerts = Alert.query.filter_by(source_type="host").count()
         recent_alerts = Alert.query.filter(
             Alert.time >= datetime.datetime.now() - datetime.timedelta(hours=1)
         ).count()
@@ -54,6 +56,8 @@ class AlertController:
             "online_hosts": online_hosts,
             "offline_hosts": offline_hosts,
             "total_alerts": total_alerts,
+            "network_alerts": network_alerts,
+            "host_alerts": host_alerts,
             "recent_alerts_1h": recent_alerts,
             "registered_agents": registered_agents,
             "online_agents": online_agents,
