@@ -407,7 +407,7 @@ _usb_event_log = []       # Timestamped USB events for reporting
 # USB persistence: keep device weight active for multiple cycles after detection
 _usb_last_detection_time = 0
 _usb_cached_weight = 0
-_USB_PERSIST_SECONDS = 60   # seconds to keep USB weight after detection
+_USB_PERSIST_SECONDS = 15   # seconds to keep USB weight after detection (short bridge)
 
 # Standard system drives to ignore (C: always present, etc.)
 _SYSTEM_DRIVES = {"C:"}
@@ -916,15 +916,18 @@ def collect_features(window_seconds=5):
     total_device_activities = float(usb_device_weight) + float(usb_files_on_drive)
 
     # ── USB persistence ──
-    # USB detection and file creation often happen on DIFFERENT cycles:
-    #   Cycle N: USB detected (device=200), files not yet created (files=0)
-    #   Cycle N+1: files appear (files=2204), USB already "old" (device=0)
-    # The model needs BOTH device + file features to classify as attack.
-    # Persist USB weight for 60s so it overlaps with file activity.
+    # Bridge detection and file counting across cycles (15s window).
     global _usb_last_detection_time, _usb_cached_weight
     if new_drive_count > 0:
         _usb_last_detection_time = time.time()
         _usb_cached_weight = max(total_device_activities, 200.0)
+    elif len(removed_drives) > 0:
+        # USB was physically removed — clear persistence immediately
+        ts_now = datetime.now().strftime("%H:%M:%S")
+        print(f"[{ts_now}] [USB-MONITOR] ✓ Drive removed — clearing USB persistence")
+        _usb_last_detection_time = 0
+        _usb_cached_weight = 0
+        total_device_activities = 0.0
     if time.time() - _usb_last_detection_time < _USB_PERSIST_SECONDS:
         total_device_activities = max(total_device_activities, _usb_cached_weight)
 
