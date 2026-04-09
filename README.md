@@ -3,9 +3,9 @@
 ## 📖 Overview
 
 A dual-layer **Intrusion Detection & Prevention System** powered by AI:
-- **Network IDS**: Real-time packet capture → XGBoost (binary + multi-class) detects 5 attack types
-- **Host IDS**: Collects 15 CERT features → XGBoost + Random Forest detects insider threats
-- **Prevention**: Auto-blocks attacker IPs via Windows Firewall rules
+- **Network IDS/IPS**: Real-time packet capture → 2-stage XGBoost detects 8+ attack types + auto-blocks via firewall
+- **Host IDS/IPS**: 15 CERT r4.2 features → XGBoost (threshold 0.65) detects insider threats + lock screen, USB disable, process kill
+- **Alert Dialog**: Fullscreen threat alert with admin password authentication
 - **Dashboard**: React frontend with real-time Socket.IO alerts
 
 ---
@@ -30,24 +30,17 @@ npm run dev
 ```
 Frontend runs on **http://127.0.0.1:3000**
 
-### 3. Login
+### 3. Host Agent (on monitored devices)
+```bash
+cd deploy/host_agent
+pip install -r requirements.txt
+python host_agent.py
+```
+See `deploy/host_agent/README_AGENT.md` for full setup instructions.
+
+### 4. Login
 - **Username:** admin
 - **Password:** admin
-
----
-
-## 🧪 Testing Attacks (from Kali VM)
-
-```bash
-# Port Scan
-sudo nmap -sS -T4 --top-ports 100 -Pn 192.168.253.1
-
-# SSH Brute Force
-sudo hydra -l root -P /usr/share/wordlists/rockyou.txt ssh://192.168.253.1
-
-# SYN Flood
-sudo hping3 -S --flood -V -p 80 192.168.253.1
-```
 
 ---
 
@@ -55,76 +48,54 @@ sudo hping3 -S --flood -V -p 80 192.168.253.1
 
 ```
 FinalProjectAI-BasedIPSAndIDS/
-├── .gitignore
 ├── README.md
-├── venv/                          (Python env - not tracked)
+├── host_attack_simulation.py      (Host attack testing tool)
+├── deploy/
+│   └── host_agent/                (Deploy package for client machines)
+│       ├── host_agent.py
+│       ├── alert_ui.py
+│       ├── config.ini
+│       ├── install_agent.py
+│       ├── requirements.txt
+│       └── README_AGENT.md
 └── project/
-    ├── doc/                       (Documentation)
-    │   └── PREVENTION_METHODOLOGY.md
-    ├── training/                  (Model training - separate from runtime)
-    │   ├── captures/              (.pcap files for training)
-    │   ├── csv/                   (Training datasets)
-    │   ├── data_pipeline/         (train.py, balance, pcap_to_csv, verify)
-    │   └── RETRAINING_GUIDE.md
     ├── agents/
-    │   ├── host_agent/            (Host IDS agent - runs on endpoints)
-    │   │   ├── host_agent.py
-    │   │   └── config.ini
-    │   └── network_sensor/        (Network IDS sensor)
-    │       └── network_sensor.py
+    │   └── host_agent/            (Development copy of host agent)
     ├── backend/
-    │   ├── app.py                 (Flask app factory + startup)
-    │   ├── extensions.py          (DB, CORS, SocketIO init)
+    │   ├── app.py                 (Flask app + startup)
     │   ├── requirements.txt
-    │   ├── ai_models/             (Pre-trained model files)
-    │   │   ├── host_cnn/          (XGBoost, RF, CNN for host)
-    │   │   └── network_xgb/       (XGBoost binary + attack)
-    │   ├── models/                (SQLAlchemy ORM models)
-    │   ├── controllers/           (Business logic controllers)
-    │   ├── routes/                (Flask route blueprints)
-    │   ├── middleware/            (Auth decorators)
-    │   ├── utils/                 (Constants, model pipelines)
-    │   └── src/
-    │       ├── domain/            (Core entities & enums)
-    │       ├── application/       (Service layer)
-    │       ├── api/               (API blueprint & endpoints)
-    │       └── infra/             (Model loader + network module)
-    │           └── network_module/
-    │               ├── config/    (IDS settings & thresholds)
-    │               ├── sniffer/   (Live capture + packet parser)
-    │               └── data_pipeline/ (Feature engineering - runtime)
+    │   ├── ai_models/
+    │   │   ├── host_cnn/          (XGBoost + RF for host detection)
+    │   │   └── network_xgb/       (2-stage XGBoost for network)
+    │   ├── models/                (SQLAlchemy ORM)
+    │   ├── controllers/           (Business logic)
+    │   ├── routes/                (Flask blueprints)
+    │   ├── utils/                 (Response orchestrator, pipelines)
+    │   └── src/infra/
+    │       ├── model_loader.py    (AI model loading)
+    │       └── network_module/
+    │           ├── config/        (Thresholds & settings)
+    │           ├── sniffer/       (Live capture + packet parser)
+    │           └── data_pipeline/ (52-feature engineering)
     └── frontend/
-        ├── index.html
-        ├── package.json
-        ├── vite.config.js
-        └── src/
-            ├── App.jsx            (Router setup)
-            ├── socket.js          (Socket.IO client)
-            ├── config.js          (API base URL)
-            ├── context/           (System state context)
-            └── Components/
-                ├── Login/         (Auth page)
-                ├── Dashboard/     (Main stats)
-                ├── Network/       (Network alerts - real-time)
-                ├── Host/          (Host monitoring)
-                ├── HostLogs/      (Host event logs)
-                ├── AlertPage/     (All alerts view)
-                ├── Agents/        (Registered agents)
-                ├── Controls/      (Prevention controls)
-                ├── Sidebar/       (Navigation)
-                └── NotFound/      (404 page)
+        └── src/Components/
+            ├── Dashboard/         (Stats + threat overview)
+            ├── Network/           (Network alerts)
+            ├── Host/              (Host monitoring)
+            ├── Controls/          (Prevention settings)
+            └── Agents/            (Registered agents)
 ```
 
 ---
 
 ## ✨ Features
 
-- **5 AI Attack Types**: PortScan, SSHBrute, FTPBrute, ARPSpoof, SYNFlood
-- **Heuristic Detection**: ICMPFlood, DDoS, DDoS-UDP, DDoS-RAW, DDoS-ICMP
-- **Real-Time Alerts**: Socket.IO live updates to browser
-- **Prevention Mode**: Auto-blocks IPs after 5+ alerts via firewall rules
-- **Clean Architecture**: Domain → Application → Infrastructure → API
-- **Host Monitoring**: Insider threat detection via CERT features
+- **8+ Attack Types**: PortScan, SSHBrute, FTPBrute, ARPSpoof, SYNFlood (AI) + ICMP Flood, DDoS UDP, DDoS RAW (heuristic)
+- **Host Insider Threats**: USB detection, file activity, after-hours monitoring, network anomalies
+- **Real-Time Alerts**: Socket.IO live updates to dashboard
+- **Severity-Based Auto-Block**: Critical (3 alerts) → High (10) → Medium (15) before firewall block
+- **Host Prevention**: Lock screen + disable USB + kill processes + fullscreen alert dialog
+- **Admin Authentication**: Threat alert requires password to dismiss
 
 ---
 
@@ -134,8 +105,9 @@ FinalProjectAI-BasedIPSAndIDS/
 |-------|-----------|
 | Backend | Flask + Flask-SocketIO |
 | Frontend | React + Vite |
-| Network AI | XGBoost (binary + multi-class) |
-| Host AI | XGBoost + Random Forest + TensorFlow CNN |
-| Sniffer | Scapy |
+| Network AI | XGBoost (binary 0.70 + multi-class 0.50) |
+| Host AI | XGBoost (0.65) + Random Forest |
+| Sniffer | Scapy (52 features per window) |
 | Database | SQLite |
 | Real-time | Socket.IO |
+| Alert UI | pywebview (HTML/CSS) |
