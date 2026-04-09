@@ -23,6 +23,7 @@ class AlertController:
     def get_dashboard_stats():
         """Aggregate stats for the frontend dashboard."""
         from models.registered_agent import RegisteredAgent
+        from models.prediction_log import PredictionLog
         import os
 
         total_hosts = Host.query.count()
@@ -30,7 +31,7 @@ class AlertController:
         offline_hosts = Host.query.filter_by(status="Offline").count()
         total_alerts = Alert.query.count()
         network_alerts = Alert.query.filter_by(source_type="network").count()
-        host_alerts = Alert.query.filter_by(source_type="host").count()
+        host_alerts = PredictionLog.query.filter_by(prediction="Attack").count()
         recent_alerts = Alert.query.filter(
             Alert.time >= datetime.datetime.now() - datetime.timedelta(hours=1)
         ).count()

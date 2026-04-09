@@ -36,6 +36,7 @@ export default function Controls() {
   const [showQuickActions, setShowQuickActions] = useState(false);
   const [showHostQuickActions, setShowHostQuickActions] = useState(false);
   const [confirmModal, setConfirmModal] = useState({ show: false, title: "", message: "", onConfirm: null });
+  const [toast, setToast] = useState({ show: false, message: "" });
 
   // Host Prevention State
   const [hostPrevention, setHostPrevention] = useState(null);
@@ -110,6 +111,10 @@ export default function Controls() {
     setConfirmModal({ show: true, title, message, onConfirm });
   };
   const closeConfirm = () => setConfirmModal({ show: false, title: "", message: "", onConfirm: null });
+  const showToast = (message) => {
+    setToast({ show: true, message });
+    setTimeout(() => setToast({ show: false, message: "" }), 3000);
+  };
 
   const applyThresholds= async () => {
     const val1 = parseFloat(thresholdInput);
@@ -180,7 +185,7 @@ export default function Controls() {
         const res = await fetch(`${API_BASE}/api/alerts/archive`, { method: "POST" });
         if (res.ok) {
           const data = await res.json();
-          alert(`Archived ${data.archived} alerts`);
+          showToast(`✅ Archived ${data.archived} alerts`);
           fetchArchives();
         }
       } catch (err) { console.error("Archive error:", err); }
@@ -215,7 +220,7 @@ export default function Controls() {
     const critical = parseFloat(hostThresholds.critical);
     if (isNaN(low) || isNaN(medium) || isNaN(critical)) return;
     if (!(0 <= low && low < medium && medium < critical && critical <= 1)) {
-      alert("Thresholds must be: 0 ≤ Low < Medium < Critical ≤ 1");
+      showToast("⚠ Thresholds must be: 0 ≤ Low < Medium < Critical ≤ 1");
       return;
     }
     setHostSaving(true);
@@ -238,7 +243,7 @@ export default function Controls() {
         const res = await fetch(`${API_BASE}/api/host-alerts/archive`, { method: "POST" });
         if (res.ok) {
           const data = await res.json();
-          alert(`Archived ${data.predictions_archived} predictions + ${data.events_archived} agent events`);
+          showToast(`✅ Archived ${data.predictions_archived} predictions + ${data.events_archived} agent events`);
           fetchHostArchives();
           fetchData();
         }
@@ -252,7 +257,7 @@ export default function Controls() {
       try {
         const res = await fetch(`${API_BASE}/api/host-alerts/clear`, { method: "POST" });
         if (res.ok) {
-          alert("All host logs cleared");
+          showToast("✅ All host logs cleared");
           fetchData();
         }
       } catch (err) { console.error("Clear host logs error:", err); }
@@ -840,6 +845,20 @@ export default function Controls() {
                 }}>Confirm</button>
               </div>
             </div>
+          </div>
+        )}
+
+        {/* Toast Notification */}
+        {toast.show && (
+          <div style={{
+            position: "fixed", bottom: "24px", right: "24px", zIndex: 10000,
+            background: "#1a1a2e", border: "1px solid rgba(34,197,94,0.3)",
+            borderRadius: "12px", padding: "14px 24px",
+            boxShadow: "0 8px 32px rgba(0,0,0,0.4)",
+            color: "#e2e8f0", fontSize: "0.9rem", fontWeight: 500,
+            animation: "fadeSlideIn 0.3s ease",
+          }}>
+            {toast.message}
           </div>
         )}
 
