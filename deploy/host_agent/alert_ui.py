@@ -93,20 +93,20 @@ ALERT_HTML = """<!DOCTYPE html>
   }
   @keyframes drift { to { transform: translate(28px, 28px); } }
 
-  /* ── Scanning line ── */
+  /* ── Scanning line — bounces up/down inside dialog card ── */
   .scan-line {
-    position: fixed; left: 0; right: 0;
-    height: 1px;
-    background: linear-gradient(90deg, transparent 8%, var(--red) 50%, transparent 92%);
+    position: absolute; left: 0; right: 0;
+    height: 2px;
+    background: linear-gradient(90deg, transparent 2%, var(--red) 50%, transparent 98%);
     opacity: 0.5;
-    animation: scan 4.5s cubic-bezier(0.4, 0, 0.2, 1) infinite;
+    animation: scan 3.5s ease-in-out infinite alternate;
     pointer-events: none; z-index: 100;
   }
   @keyframes scan {
-    0%   { top: -1px; opacity: 0; }
-    6%   { opacity: 0.5; }
-    94%  { opacity: 0.5; }
-    100% { top: 100%; opacity: 0; }
+    0%   { top: 0; opacity: 0.3; }
+    10%  { opacity: 0.6; }
+    90%  { opacity: 0.6; }
+    100% { top: calc(100% - 2px); opacity: 0.3; }
   }
 
   /* ── Custom Title Bar ── */
@@ -306,10 +306,10 @@ ALERT_HTML = """<!DOCTYPE html>
 <body>
   <div class="backdrop"></div>
   <div class="bg-grid"></div>
-  <div class="scan-line"></div>
 
   <div class="dialog-card">
-  <div class="title-bar pywebview-drag-region">
+  <div class="scan-line"></div>
+  <div class="title-bar">
     <div class="title-bar-left">
       <div class="title-dot"></div>
       <span>IDS/IPS &bull; THREAT ALERT</span>
@@ -540,26 +540,44 @@ def main():
         on_top=True,
         frameless=True,
         js_api=api,
+        background_color='#000000',
     )
     window.events.closing += block_close
     api._window = window
 
-    # Focus enforcement — bring window back if user Alt+Tabs
+    # Focus enforcement — bring window back if user Alt+Tabs, hide taskbar
     def _enforce_focus():
         try:
             import ctypes
+            from ctypes import wintypes
             user32 = ctypes.windll.user32
-            time.sleep(2)
+            kernel32 = ctypes.windll.kernel32
+
+            # Get full screen dimensions (including taskbar area)
+            screen_w = user32.GetSystemMetrics(0)
+            screen_h = user32.GetSystemMetrics(1)
+
+            time.sleep(1)
             while not api.authenticated:
                 try:
                     hwnd = user32.FindWindowW(None, "IDS/IPS \u2014 Threat Detected")
                     if hwnd:
+                        # Force window to cover ENTIRE screen including taskbar
+                        SWP_SHOWWINDOW = 0x0040
+                        HWND_TOPMOST = -1
+                        user32.SetWindowPos(
+                            hwnd, HWND_TOPMOST,
+                            0, 0, screen_w, screen_h,
+                            SWP_SHOWWINDOW
+                        )
+                        # Always bring to foreground
                         fg = user32.GetForegroundWindow()
                         if fg != hwnd:
                             user32.SetForegroundWindow(hwnd)
+                            user32.BringWindowToTop(hwnd)
                 except Exception:
                     pass
-                time.sleep(1)
+                time.sleep(0.5)
         except Exception:
             pass
 

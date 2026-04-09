@@ -11,6 +11,10 @@ from extensions import db, socketio
 
 agent_bp = Blueprint("agent", __name__)
 
+# ── In-memory store for agent alert events (per host, max 50 each) ──
+_agent_alert_events = {}   # {host_name: [event_dict, ...]}
+_MAX_EVENTS_PER_HOST = 50
+
 
 @agent_bp.route("/api/agent/register", methods=["POST"])
 @require_agent_key
@@ -300,6 +304,9 @@ def reset_host_prevention():
     # Also clean up server-side state
     InsiderThreatResponseOrchestrator._active_constraints.pop(host_name, None)
 
+    # Clear stored alert events for this host
+    _agent_alert_events.pop(host_name, None)
+
     print(f"[PREVENTION RESET] Queued reset for {host_name}")
     socketio.emit("prevention_reset", {"host_name": host_name})
 
@@ -365,13 +372,36 @@ def agent_alert_status():
     print(f"[ALERT STATUS] {host_name}: {label}")
 
     # Emit to frontend in real-time
-    socketio.emit("alert_status", {
+    event_obj = {
         "event": event,
         "host_name": host_name,
         "agent_id": agent_id,
         "details": details,
         "label": label,
         "time": ts,
-    })
+    }
+    socketio.emit("alert_status", event_obj)
+
+    # Persist in memory (newest first, capped)
+    if host_name not in _agent_alert_events:
+        _agent_alert_events[host_name] = []
+    _agent_alert_events[host_name].insert(0, event_obj)
+    _agent_alert_events[host_name] = _agent_alert_events[host_name][:_MAX_EVENTS_PER_HOST]
 
     return jsonify({"status": "received", "event": event})
+
+
+@agent_bp.route("/api/agent/alert-events/<host_name>", methods=["GET"])
+def get_agent_alert_events(host_name):
+    """Return stored alert events for a host (newest first)."""
+    return jsonify(_agent_alert_events.get(host_name, []))
+
+
+@agent_bp.route("/api/agent/alert-events", methods=["GET"])
+def get_all_agent_alert_events():
+    """Return all alert events across all hosts (newest first)."""
+    all_events = []
+    for events in _agent_alert_events.values():
+        all_events.extend(events)
+    all_events.sort(key=lambda e: e.get("time", ""), reverse=True)
+    return jsonify(all_events[:_MAX_EVENTS_PER_HOST])

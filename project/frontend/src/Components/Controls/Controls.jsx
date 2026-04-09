@@ -15,6 +15,7 @@ import {
   Activity,
   Settings,
   Monitor,
+  AlertTriangle,
 } from "lucide-react";
 
 export default function Controls() {
@@ -32,12 +33,21 @@ export default function Controls() {
   const [archiveData, setArchiveData] = useState(null);
   const [archiveFilename, setArchiveFilename] = useState("");
   const [saving, setSaving] = useState(false);
+  const [showQuickActions, setShowQuickActions] = useState(false);
+  const [showHostQuickActions, setShowHostQuickActions] = useState(false);
+  const [confirmModal, setConfirmModal] = useState({ show: false, title: "", message: "", onConfirm: null });
 
   // Host Prevention State
   const [hostPrevention, setHostPrevention] = useState(null);
   const [hostThresholds, setHostThresholds] = useState({ low: "0.50", medium: "0.70", critical: "0.90" });
   const [hostSaving, setHostSaving] = useState(false);
   const [hostLogs, setHostLogs] = useState([]);
+
+  // Host Archives State
+  const [hostArchives, setHostArchives] = useState([]);
+  const [showHostArchives, setShowHostArchives] = useState(false);
+  const [hostArchiveData, setHostArchiveData] = useState(null);
+  const [hostArchiveFilename, setHostArchiveFilename] = useState("");
 
   /* ── Fetch ── */
   const fetchData = useCallback(async () => {
@@ -96,7 +106,12 @@ export default function Controls() {
   }, [fetchData]);
 
   /* ── Actions ── */
-  const applyThresholds = async () => {
+  const showConfirm = (title, message, onConfirm) => {
+    setConfirmModal({ show: true, title, message, onConfirm });
+  };
+  const closeConfirm = () => setConfirmModal({ show: false, title: "", message: "", onConfirm: null });
+
+  const applyThresholds= async () => {
     const val1 = parseFloat(thresholdInput);
     const val2 = parseFloat(classThresholdInput);
     if (isNaN(val1) || val1 < 0 || val1 > 1) return;
@@ -146,31 +161,31 @@ export default function Controls() {
     }
   };
 
-  const resetPrevention = async () => {
-    if (!window.confirm("Remove ALL firewall rules and disable IPS?")) return;
-    try {
-      const res = await fetch(`${API_BASE}/api/network/prevention/reset`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-      });
-      if (res.ok) fetchData();
-    } catch (err) {
-      console.error("Reset error:", err);
-    }
+  const resetPrevention = () => {
+    showConfirm("Reset Network Prevention", "Remove ALL firewall rules and disable IPS? This will unblock all IPs.", async () => {
+      try {
+        const res = await fetch(`${API_BASE}/api/network/prevention/reset`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+        });
+        if (res.ok) fetchData();
+      } catch (err) { console.error("Reset error:", err); }
+      closeConfirm();
+    });
   };
 
-  const archiveAlerts = async () => {
-    if (!window.confirm("Archive all current alerts and start fresh?")) return;
-    try {
-      const res = await fetch(`${API_BASE}/api/alerts/archive`, { method: "POST" });
-      if (res.ok) {
-        const data = await res.json();
-        alert(`Archived ${data.archived} alerts`);
-        fetchArchives();
-      }
-    } catch (err) {
-      console.error("Archive error:", err);
-    }
+  const archiveAlerts = () => {
+    showConfirm("Archive Alerts", "Archive all current alerts and start fresh?", async () => {
+      try {
+        const res = await fetch(`${API_BASE}/api/alerts/archive`, { method: "POST" });
+        if (res.ok) {
+          const data = await res.json();
+          alert(`Archived ${data.archived} alerts`);
+          fetchArchives();
+        }
+      } catch (err) { console.error("Archive error:", err); }
+      closeConfirm();
+    });
   };
 
   const fetchArchives = async () => {
@@ -217,11 +232,79 @@ export default function Controls() {
     setTimeout(() => setHostSaving(false), 600);
   };
 
+  const archiveHostLogs = () => {
+    showConfirm("Archive Host Logs", "Archive all host prediction logs and agent events, then clear them?", async () => {
+      try {
+        const res = await fetch(`${API_BASE}/api/host-alerts/archive`, { method: "POST" });
+        if (res.ok) {
+          const data = await res.json();
+          alert(`Archived ${data.predictions_archived} predictions + ${data.events_archived} agent events`);
+          fetchHostArchives();
+          fetchData();
+        }
+      } catch (err) { console.error("Host archive error:", err); }
+      closeConfirm();
+    });
+  };
+
+  const clearHostLogs = () => {
+    showConfirm("Clear Host Logs", "Delete ALL host prediction logs and agent events? This cannot be undone.", async () => {
+      try {
+        const res = await fetch(`${API_BASE}/api/host-alerts/clear`, { method: "POST" });
+        if (res.ok) {
+          alert("All host logs cleared");
+          fetchData();
+        }
+      } catch (err) { console.error("Clear host logs error:", err); }
+      closeConfirm();
+    });
+  };
+
+  const fetchHostArchives = async () => {
+    try {
+      const res = await fetch(`${API_BASE}/api/host-alerts/archives`);
+      if (res.ok) setHostArchives(await res.json());
+    } catch (err) {
+      console.error("Host archives error:", err);
+    }
+  };
+
+  const loadHostArchive = async (filename) => {
+    try {
+      const res = await fetch(`${API_BASE}/api/host-alerts/archives/${filename}`);
+      if (res.ok) {
+        setHostArchiveData(await res.json());
+        setHostArchiveFilename(filename);
+      }
+    } catch (err) {
+      console.error("Load host archive error:", err);
+    }
+  };
+
+  const deleteHostArchive = (filename) => {
+    showConfirm("Delete Archive", `Delete archive ${filename}?`, async () => {
+      try {
+        const res = await fetch(`${API_BASE}/api/host-alerts/archives/${filename}`, { method: "DELETE" });
+        if (res.ok) fetchHostArchives();
+      } catch (err) { console.error("Delete host archive error:", err); }
+      closeConfirm();
+    });
+  };
+
   /* ── Render ── */
   return (
     <div className="dashboard">
       <Sidebar prevention={prevention} />
       <div className="main-content">
+
+        <style>{`
+          @keyframes fadeIn { from { opacity: 0; } to { opacity: 1; } }
+          @keyframes scaleIn { from { opacity: 0; transform: scale(0.9); } to { opacity: 1; transform: scale(1); } }
+          @keyframes fadeSlideIn { from { opacity: 0; transform: translateY(-10px); } to { opacity: 1; transform: translateY(0); } }
+          .ctrl-action-btn { transition: all 0.2s ease; }
+          .ctrl-action-btn:hover { transform: translateY(-1px); filter: brightness(1.2); }
+          .ctrl-action-btn:active { transform: translateY(0); filter: brightness(0.9); }
+        `}</style>
 
         {/* Header */}
         <div className="icondesign">
@@ -284,29 +367,31 @@ export default function Controls() {
               </button>
             </div>
           </div>
-
-          {/* Card 3: Quick Actions */}
-          <div className="ctrl-card">
-            <div className="ctrl-card-header">
-              <Trash2 size={20} color="#9ca3af" />
-              <h3>Quick Actions</h3>
-            </div>
-            <div className="ctrl-actions">
-              <button className="ctrl-action-btn danger" onClick={resetPrevention}>
-                <Trash2 size={14} /> Reset All Rules
-              </button>
-              <button className="ctrl-action-btn archive" onClick={archiveAlerts}>
-                <Archive size={14} /> Archive Alerts
-              </button>
-              <button
-                className="ctrl-action-btn neutral"
-                onClick={() => { setShowArchives(!showArchives); if (!showArchives) fetchArchives(); }}
-              >
-                <Archive size={14} /> {showArchives ? "Hide" : "View"} Archives
-              </button>
-            </div>
-          </div>
         </div>
+
+        {/* Quick Actions Toggle */}
+        <button className="ctrl-advanced-toggle" onClick={() => setShowQuickActions(!showQuickActions)}>
+          <Trash2 size={14} />
+          Quick Actions
+          {showQuickActions ? <ChevronUp size={14} /> : <ChevronDown size={14} />}
+        </button>
+
+        {showQuickActions && (
+          <div className="ctrl-actions" style={{ marginBottom: "16px", animation: "fadeSlideIn 0.3s ease" }}>
+            <button className="ctrl-action-btn danger" onClick={resetPrevention}>
+              <Trash2 size={14} /> Reset All Rules
+            </button>
+            <button className="ctrl-action-btn archive" onClick={archiveAlerts}>
+              <Archive size={14} /> Archive Alerts
+            </button>
+            <button
+              className="ctrl-action-btn neutral"
+              onClick={() => { setShowArchives(!showArchives); if (!showArchives) fetchArchives(); }}
+            >
+              <Archive size={14} /> {showArchives ? "Hide" : "View"} Archives
+            </button>
+          </div>
+        )}
 
         {/* ── Detection Thresholds ── */}
         <div className="ctrl-section">
@@ -484,40 +569,131 @@ export default function Controls() {
               </button>
               <button
                 className={`ctrl-mode-btn ${hostPrevention?.test_mode === false ? "selected" : ""}`}
-                onClick={async () => {
-                  if (!window.confirm("⚠️ Enable LIVE mode? This will execute real prevention actions on host devices.")) return;
-                  try {
-                    await fetch(`${API_BASE}/api/prevention/mode`, {
-                      method: "POST",
-                      headers: { "Content-Type": "application/json" },
-                      body: JSON.stringify({ test_mode: false }),
-                    });
-                    fetchData();
-                  } catch (e) { console.error(e); }
+                onClick={() => {
+                  showConfirm("Enable LIVE Mode", "⚠️ Enable LIVE mode? This will execute real prevention actions on host devices.", async () => {
+                    try {
+                      await fetch(`${API_BASE}/api/prevention/mode`, {
+                        method: "POST",
+                        headers: { "Content-Type": "application/json" },
+                        body: JSON.stringify({ test_mode: false }),
+                      });
+                      fetchData();
+                    } catch (e) { console.error(e); }
+                    closeConfirm();
+                  });
                 }}
               >
                 <ShieldCheck size={14} /> Live Mode
               </button>
             </div>
           </div>
+        </div>
 
-          <div className="ctrl-card">
-            <div className="ctrl-card-header">
-              <Activity size={20} color="#3b82f6" />
-              <h3>Host Prevention Status</h3>
+        {/* Host Quick Actions Toggle */}
+        <button className="ctrl-advanced-toggle" onClick={() => setShowHostQuickActions(!showHostQuickActions)}>
+          <Trash2 size={14} />
+          Host Quick Actions
+          {showHostQuickActions ? <ChevronUp size={14} /> : <ChevronDown size={14} />}
+        </button>
+
+        {showHostQuickActions && (
+          <div className="ctrl-actions" style={{ marginBottom: "16px", animation: "fadeSlideIn 0.3s ease" }}>
+            <button className="ctrl-action-btn archive" onClick={archiveHostLogs}>
+              <Archive size={14} /> Archive Host Logs
+            </button>
+            <button className="ctrl-action-btn danger" onClick={clearHostLogs}>
+              <Trash2 size={14} /> Clear All Host Logs
+            </button>
+            <button
+              className="ctrl-action-btn neutral"
+              onClick={() => { setShowHostArchives(!showHostArchives); if (!showHostArchives) fetchHostArchives(); }}
+            >
+              <Archive size={14} /> {showHostArchives ? "Hide" : "View"} Host Archives
+            </button>
+          </div>
+        )}
+
+        {/* Host Archives */}
+        {showHostArchives && (
+          <div className="ctrl-section">
+            <div className="ctrl-section-header">
+              <Archive size={20} color="#8b5cf6" />
+              <h2>Host Archives</h2>
             </div>
-            <div className="ctrl-host-stats">
-              <div className="ctrl-host-stat">
-                <span className="ctrl-host-stat-num">{hostPrevention?.total_actions || 0}</span>
-                <span className="ctrl-host-stat-label">Total Actions</span>
-              </div>
-              <div className="ctrl-host-stat">
-                <span className="ctrl-host-stat-num" style={{ color: "#f59e0b" }}>{hostPrevention?.active_blocks || 0}</span>
-                <span className="ctrl-host-stat-label">Active Blocks</span>
-              </div>
+            {hostArchives.length > 0 ? (
+              <table>
+                <thead><tr><th>File</th><th>Type</th><th>Size</th><th>Actions</th></tr></thead>
+                <tbody>
+                  {hostArchives.map((a) => (
+                    <tr key={a.filename}>
+                      <td style={{ fontFamily: "monospace", fontSize: "0.8rem" }}>{a.filename}</td>
+                      <td>
+                        <span style={{
+                          background: a.type === "predictions" ? "rgba(139,92,246,0.15)" : "rgba(249,115,22,0.15)",
+                          color: a.type === "predictions" ? "#8b5cf6" : "#f97316",
+                          padding: "2px 8px", borderRadius: "4px", fontSize: "0.75rem"
+                        }}>
+                          {a.type === "predictions" ? "Predictions" : "Agent Events"}
+                        </span>
+                      </td>
+                      <td>{a.size_kb} KB</td>
+                      <td style={{ display: "flex", gap: "6px" }}>
+                        <button className="view-logs-btn" onClick={() => loadHostArchive(a.filename)}>Load</button>
+                        <button className="view-logs-btn" style={{ background: "rgba(239,68,68,0.15)", color: "#ef4444" }} onClick={() => deleteHostArchive(a.filename)}>Delete</button>
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            ) : (
+              <p style={{ color: "#6b7280", fontStyle: "italic" }}>No host archives yet</p>
+            )}
+          </div>
+        )}
+
+        {/* Host Archive Data Viewer */}
+        {hostArchiveData && (
+          <div className="ctrl-section">
+            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+              <h3>Archive: {hostArchiveFilename} ({Array.isArray(hostArchiveData) ? hostArchiveData.length : 0} entries)</h3>
+              <button onClick={() => { setHostArchiveData(null); setHostArchiveFilename(""); }} className="back-btn">Close</button>
+            </div>
+            <div className="table-scroll-container">
+              {hostArchiveFilename.startsWith("host_predictions") ? (
+                <table>
+                  <thead><tr><th>Time</th><th>Device</th><th>Prediction</th><th>Probability</th><th>XGBoost</th><th>RF</th><th>Level</th></tr></thead>
+                  <tbody>
+                    {(hostArchiveData || []).slice(0, 100).map((a, i) => (
+                      <tr key={i}>
+                        <td>{a.time ? new Date(a.time).toLocaleString() : "N/A"}</td>
+                        <td>{a.host_name || "-"}</td>
+                        <td><strong style={{ color: a.prediction === "Attack" ? "#ef4444" : "#22c55e" }}>{a.prediction}</strong></td>
+                        <td>{((a.probability || 0) * 100).toFixed(1)}%</td>
+                        <td>{a.xgb_prediction} ({((a.xgb_probability || 0) * 100).toFixed(1)}%)</td>
+                        <td>{a.rf_prediction} ({((a.rf_probability || 0) * 100).toFixed(1)}%)</td>
+                        <td><span className={`ctrl-level-badge ${(a.prevention_level || "").toLowerCase()}`}>{a.prevention_level || "-"}</span></td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              ) : (
+                <table>
+                  <thead><tr><th>Time</th><th>Device</th><th>Event</th><th>Details</th></tr></thead>
+                  <tbody>
+                    {(hostArchiveData || []).slice(0, 100).map((a, i) => (
+                      <tr key={i}>
+                        <td>{a.time ? new Date(a.time).toLocaleString() : "N/A"}</td>
+                        <td>{a.host_name || "-"}</td>
+                        <td><strong>{a.event}</strong></td>
+                        <td>{a.label || "-"}</td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              )}
             </div>
           </div>
-        </div>
+        )}
 
         {/* Host Threat Thresholds */}
         <div className="ctrl-section">
@@ -619,6 +795,50 @@ export default function Controls() {
                   ))}
                 </tbody>
               </table>
+            </div>
+          </div>
+        )}
+
+        {/* Custom Confirmation Modal */}
+        {confirmModal.show && (
+          <div style={{
+            position: "fixed", inset: 0, zIndex: 9999,
+            background: "rgba(0,0,0,0.7)", backdropFilter: "blur(4px)",
+            display: "flex", justifyContent: "center", alignItems: "center",
+            animation: "fadeIn 0.2s ease",
+          }}>
+            <div style={{
+              background: "#1a1a2e", border: "1px solid rgba(239,68,68,0.3)",
+              borderRadius: "16px", padding: "32px", maxWidth: "440px", width: "90%",
+              boxShadow: "0 20px 60px rgba(0,0,0,0.5), 0 0 40px rgba(239,68,68,0.1)",
+              animation: "scaleIn 0.25s ease",
+            }}>
+              <div style={{ display: "flex", alignItems: "center", gap: "12px", marginBottom: "16px" }}>
+                <div style={{
+                  width: "40px", height: "40px", borderRadius: "12px",
+                  background: "rgba(239,68,68,0.15)", display: "flex",
+                  alignItems: "center", justifyContent: "center",
+                }}>
+                  <AlertTriangle size={22} color="#ef4444" />
+                </div>
+                <h3 style={{ margin: 0, fontSize: "1.1rem", color: "#f8fafc" }}>{confirmModal.title}</h3>
+              </div>
+              <p style={{ color: "#94a3b8", fontSize: "0.9rem", lineHeight: 1.6, marginBottom: "24px" }}>
+                {confirmModal.message}
+              </p>
+              <div style={{ display: "flex", gap: "12px", justifyContent: "flex-end" }}>
+                <button onClick={closeConfirm} style={{
+                  padding: "10px 20px", borderRadius: "8px", border: "1px solid #334155",
+                  background: "transparent", color: "#94a3b8", cursor: "pointer",
+                  fontSize: "0.85rem", transition: "all 0.2s",
+                }}>Cancel</button>
+                <button onClick={confirmModal.onConfirm} style={{
+                  padding: "10px 20px", borderRadius: "8px", border: "none",
+                  background: "linear-gradient(135deg, #ef4444, #dc2626)", color: "#fff",
+                  cursor: "pointer", fontSize: "0.85rem", fontWeight: 600,
+                  transition: "all 0.2s", boxShadow: "0 4px 12px rgba(239,68,68,0.3)",
+                }}>Confirm</button>
+              </div>
             </div>
           </div>
         )}

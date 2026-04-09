@@ -11,16 +11,30 @@ export default function DeviceDetail() {
   const [detail, setDetail] = useState(null);
   const [alerts, setAlerts] = useState([]);
   const [loading, setLoading] = useState(true);
+  const [agentEvents, setAgentEvents] = useState([]);
 
   const fetchData = useCallback(async () => {
     try {
-      const [detailRes, alertsRes] = await Promise.all([
+      const [detailRes, alertsRes, eventsRes] = await Promise.all([
         fetch(`${API_BASE}/api/hosts/${host_name}/detail`),
         fetch(`${API_BASE}/api/alerts?host=${host_name}`),
+        fetch(`${API_BASE}/api/agent/alert-events/${host_name}`),
       ]);
       setDetail(await detailRes.json());
       const alertsData = await alertsRes.json();
       setAlerts(Array.isArray(alertsData) ? alertsData : []);
+      const eventsData = await eventsRes.json();
+      if (Array.isArray(eventsData) && eventsData.length > 0) {
+        setAgentEvents(prev => {
+          const existing = new Set(prev.map(e => e.time));
+          const merged = [...prev];
+          for (const evt of eventsData) {
+            if (!existing.has(evt.time)) merged.push(evt);
+          }
+          merged.sort((a, b) => (b.time || "").localeCompare(a.time || ""));
+          return merged.slice(0, 50);
+        });
+      }
     } catch (err) {
       console.error("Host detail fetch error:", err);
     } finally {
@@ -34,9 +48,21 @@ export default function DeviceDetail() {
     socket.on("host_update", (data) => {
       if (data.host_name === host_name) fetchData();
     });
+    socket.on("alert_status", (event) => {
+      if (event.host_name === host_name) {
+        setAgentEvents(prev => [event, ...prev].slice(0, 50));
+      }
+    });
+    socket.on("prevention_reset", (data) => {
+      if (data.host_name === host_name) {
+        setAgentEvents([]);
+      }
+    });
     return () => {
       clearInterval(interval);
       socket.off("host_update");
+      socket.off("alert_status");
+      socket.off("prevention_reset");
     };
   }, [host_name, fetchData]);
 
@@ -91,6 +117,39 @@ export default function DeviceDetail() {
             <h4>Last Seen</h4>
             <p style={{ fontSize: "0.85rem" }}>{host.last_seen ? new Date(host.last_seen).toLocaleTimeString() : "N/A"}</p>
           </div>
+        </div>
+
+        {/* Live Agent Events — always visible */}
+        <div className="panel" style={{ marginBottom: "20px", borderLeft: "3px solid #ef4444" }}>
+          <h3 style={{ display: "flex", alignItems: "center", gap: "8px" }}>
+            <span style={{ display: "inline-block", width: "8px", height: "8px", borderRadius: "50%", background: agentEvents.length > 0 ? "#ef4444" : "#475569", animation: agentEvents.length > 0 ? "pulse 1.5s infinite" : "none" }}></span>
+            Live Agent Events
+            {agentEvents.length > 0 && <span style={{ fontSize: "12px", color: "#94a3b8", fontWeight: 400 }}>({agentEvents.length})</span>}
+          </h3>
+          {agentEvents.length > 0 ? (
+            <div className="hide-scrollbar" style={{ maxHeight: "180px", overflowY: "auto", display: "flex", flexDirection: "column", gap: "4px", padding: "6px 0" }}>
+              {agentEvents.map((evt, i) => (
+                <div key={i} style={{
+                  display: "flex", alignItems: "center", gap: "10px",
+                  padding: "8px 12px", background: "rgba(15, 23, 42, 0.5)",
+                  borderRadius: "6px", fontSize: "12px"
+                }}>
+                  <span style={{ fontSize: "16px" }}>
+                    {evt.event === "dialog_shown" ? "🔒" : evt.event === "password_failed" ? "❌" : evt.event === "password_success" ? "✅" : "🔓"}
+                  </span>
+                  <strong style={{ color: evt.event === "password_failed" ? "#ef4444" : evt.event === "password_success" ? "#22c55e" : "#f59e0b" }}>
+                    {evt.host_name}
+                  </strong>
+                  <span style={{ color: "#94a3b8" }}>{evt.label}</span>
+                  <span style={{ marginLeft: "auto", color: "#475569", fontSize: "11px" }}>
+                    {evt.time ? new Date(evt.time).toLocaleTimeString() : ""}
+                  </span>
+                </div>
+              ))}
+            </div>
+          ) : (
+            <p style={{ color: "#475569", fontSize: "12px", padding: "12px 0" }}>No events yet — events will appear here when the agent detects threats.</p>
+          )}
         </div>
 
         {/* Alert History */}

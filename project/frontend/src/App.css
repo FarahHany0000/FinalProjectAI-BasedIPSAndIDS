@@ -514,6 +514,10 @@ th {
   display: none;                  /* Chrome/Safari */
 }
 
+/* Hide scrollbar utility */
+.hide-scrollbar { scrollbar-width: none; -ms-overflow-style: none; }
+.hide-scrollbar::-webkit-scrollbar { display: none; }
+
 /* ================= Sidebar Controls (Network page) ================= */
 .sidebar-controls {
   margin-top: 20px;
@@ -682,26 +686,52 @@ th {
 /* Quick Actions */
 .ctrl-actions {
   display: flex;
-  flex-direction: column;
-  gap: 8px;
+  flex-wrap: wrap;
+  gap: 10px;
+  padding: 12px 0;
 }
 .ctrl-action-btn {
-  display: flex;
+  display: inline-flex;
   align-items: center;
   gap: 8px;
-  padding: 8px 14px;
-  border: none;
-  border-radius: 8px;
+  padding: 10px 18px;
+  border: 1px solid transparent;
+  border-radius: 10px;
   cursor: pointer;
-  font-size: 0.8rem;
+  font-size: 0.82rem;
   font-weight: 600;
   color: #fff;
-  transition: opacity 0.2s;
+  transition: all 0.25s ease;
+  backdrop-filter: blur(4px);
+  box-shadow: 0 2px 8px rgba(0,0,0,0.2);
 }
-.ctrl-action-btn:hover { opacity: 0.85; }
-.ctrl-action-btn.danger { background: #ef4444; }
-.ctrl-action-btn.archive { background: #f97316; }
-.ctrl-action-btn.neutral { background: #374151; color: #d1d5db; }
+.ctrl-action-btn:hover {
+  transform: translateY(-2px);
+  box-shadow: 0 4px 16px rgba(0,0,0,0.3);
+  filter: brightness(1.15);
+}
+.ctrl-action-btn:active {
+  transform: translateY(0);
+  filter: brightness(0.9);
+}
+.ctrl-action-btn.danger {
+  background: rgba(239, 68, 68, 0.15);
+  border-color: rgba(239, 68, 68, 0.4);
+  color: #f87171;
+}
+.ctrl-action-btn.danger:hover { background: rgba(239, 68, 68, 0.25); }
+.ctrl-action-btn.archive {
+  background: rgba(59, 130, 246, 0.15);
+  border-color: rgba(59, 130, 246, 0.4);
+  color: #60a5fa;
+}
+.ctrl-action-btn.archive:hover { background: rgba(59, 130, 246, 0.25); }
+.ctrl-action-btn.neutral {
+  background: rgba(100, 116, 139, 0.15);
+  border-color: rgba(100, 116, 139, 0.3);
+  color: #cbd5e1;
+}
+.ctrl-action-btn.neutral:hover { background: rgba(100, 116, 139, 0.25); }
 
 /* Threshold Section */
 .ctrl-section {

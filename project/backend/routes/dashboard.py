@@ -8,6 +8,8 @@ from controllers.alert_controller import AlertController
 from controllers.network_alert_controller import NetworkAlertController
 from models.registered_agent import RegisteredAgent
 from models.alert import Alert
+from models.prediction_log import PredictionLog
+from routes.agent import _agent_alert_events
 from extensions import db, socketio
 
 dashboard_bp = Blueprint("dashboard", __name__)
@@ -373,7 +375,7 @@ def archive_alerts():
     """Move all current alerts to archive and clear the active table."""
     try:
         BASE_DIR = os.path.dirname(os.path.abspath(__file__))
-        archive_dir = os.path.join(BASE_DIR, "..", "instance", "archive")
+        archive_dir = os.path.join(BASE_DIR, "..", "instance", "archive", "network")
         os.makedirs(archive_dir, exist_ok=True)
 
         alert_count = Alert.query.count()
@@ -425,7 +427,7 @@ def list_archives():
     """List all archived alert files."""
     try:
         BASE_DIR = os.path.dirname(os.path.abspath(__file__))
-        archive_dir = os.path.join(BASE_DIR, "..", "instance", "archive")
+        archive_dir = os.path.join(BASE_DIR, "..", "instance", "archive", "network")
         if not os.path.exists(archive_dir):
             return jsonify([])
 
@@ -448,13 +450,143 @@ def get_archive(filename):
     try:
         import json
         BASE_DIR = os.path.dirname(os.path.abspath(__file__))
-        archive_path = os.path.join(BASE_DIR, "..", "instance", "archive", filename)
+        archive_path = os.path.join(BASE_DIR, "..", "instance", "archive", "network", filename)
         if not os.path.exists(archive_path):
             return jsonify({"error": "Archive not found"}), 404
         with open(archive_path) as f:
             data = json.load(f)
         return jsonify(data)
     except Exception as e:
+        return jsonify({"error": str(e)}), 500
+
+
+# ── Host Archive ──
+
+@dashboard_bp.route("/api/host-alerts/archive", methods=["POST"])
+def archive_host_alerts():
+    """Archive host prediction logs + agent events, then clear them."""
+    try:
+        BASE_DIR = os.path.dirname(os.path.abspath(__file__))
+        archive_dir = os.path.join(BASE_DIR, "..", "instance", "archive", "host")
+        os.makedirs(archive_dir, exist_ok=True)
+
+        timestamp = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
+
+        # Archive prediction logs
+        predictions = PredictionLog.query.order_by(PredictionLog.time.desc()).all()
+        pred_count = len(predictions)
+        if pred_count > 0:
+            pred_file = os.path.join(archive_dir, f"host_predictions_{timestamp}.json")
+            with open(pred_file, "w") as f:
+                json.dump([p.to_dict() for p in predictions], f, indent=2, default=str)
+
+        # Archive agent alert events
+        all_events = []
+        for host_events in _agent_alert_events.values():
+            all_events.extend(host_events)
+        events_count = len(all_events)
+        if events_count > 0:
+            events_file = os.path.join(archive_dir, f"agent_events_{timestamp}.json")
+            with open(events_file, "w") as f:
+                json.dump(all_events, f, indent=2, default=str)
+
+        if pred_count == 0 and events_count == 0:
+            return jsonify({"status": "ok", "message": "Nothing to archive",
+                            "predictions_archived": 0, "events_archived": 0})
+
+        # Clear prediction logs from DB
+        PredictionLog.query.delete()
+        db.session.commit()
+
+        # Clear agent events and notify frontend
+        _agent_alert_events.clear()
+        socketio.emit("prevention_reset", {"host_name": "__all__"})
+
+        return jsonify({
+            "status": "ok",
+            "message": f"Archived {pred_count} predictions + {events_count} agent events",
+            "predictions_archived": pred_count,
+            "events_archived": events_count,
+        })
+
+    except Exception as e:
+        db.session.rollback()
+        return jsonify({"error": str(e)}), 500
+
+
+@dashboard_bp.route("/api/host-alerts/archives", methods=["GET"])
+def list_host_archives():
+    """List all host archive files (predictions + agent events)."""
+    try:
+        BASE_DIR = os.path.dirname(os.path.abspath(__file__))
+        archive_dir = os.path.join(BASE_DIR, "..", "instance", "archive", "host")
+        if not os.path.exists(archive_dir):
+            return jsonify([])
+
+        archives = []
+        for f in sorted(os.listdir(archive_dir), reverse=True):
+            if f.endswith(".json"):
+                path = os.path.join(archive_dir, f)
+                size = os.path.getsize(path)
+                file_type = "predictions" if f.startswith("host_predictions") else "agent_events"
+                archives.append({"filename": f, "size_kb": round(size / 1024, 1), "type": file_type})
+
+        return jsonify(archives)
+
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
+
+
+@dashboard_bp.route("/api/host-alerts/archives/<filename>", methods=["GET"])
+def get_host_archive(filename):
+    """Get contents of a specific host archive file."""
+    try:
+        BASE_DIR = os.path.dirname(os.path.abspath(__file__))
+        archive_path = os.path.join(BASE_DIR, "..", "instance", "archive", "host", filename)
+        if not os.path.exists(archive_path):
+            return jsonify({"error": "Archive not found"}), 404
+        with open(archive_path) as f:
+            data = json.load(f)
+        return jsonify(data)
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
+
+
+@dashboard_bp.route("/api/host-alerts/archives/<filename>", methods=["DELETE"])
+def delete_host_archive(filename):
+    """Delete a specific host archive file."""
+    try:
+        BASE_DIR = os.path.dirname(os.path.abspath(__file__))
+        archive_path = os.path.join(BASE_DIR, "..", "instance", "archive", "host", filename)
+        if not os.path.exists(archive_path):
+            return jsonify({"error": "Archive not found"}), 404
+        os.remove(archive_path)
+        return jsonify({"status": "ok", "message": f"Deleted {filename}"})
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
+
+
+@dashboard_bp.route("/api/host-alerts/clear", methods=["POST"])
+def clear_host_alerts():
+    """Delete all host prediction logs and agent events without archiving."""
+    try:
+        pred_count = PredictionLog.query.count()
+        PredictionLog.query.delete()
+        db.session.commit()
+
+        events_count = sum(len(v) for v in _agent_alert_events.values())
+        _agent_alert_events.clear()
+        socketio.emit("prevention_reset", {"host_name": "__all__"})
+
+        return jsonify({
+            "status": "ok",
+            "message": f"Cleared {pred_count} predictions + {events_count} agent events",
+            "predictions_cleared": pred_count,
+            "events_cleared": events_count,
+        })
+
+    except Exception as e:
+        db.session.rollback()
         return jsonify({"error": str(e)}), 500
 
 

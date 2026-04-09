@@ -34,7 +34,8 @@ class ModelLoader:
         if os.path.exists(xgb_path):
             try:
                 cls._xgb_pipeline = joblib.load(xgb_path)
-                print("[OK] XGBoost model loaded (primary)")
+                cls._xgb_pipeline.threshold = 0.65  # raised from 0.5 to reduce false positives
+                print("[OK] XGBoost model loaded (primary, threshold=0.65)")
             except Exception as e:
                 print(f"[WARN] XGBoost load failed: {e}")
 

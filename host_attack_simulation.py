@@ -295,9 +295,7 @@ def attack_exfiltration():
     after_h = "YES ✓" if (datetime.now().hour < 8 or datetime.now().hour >= 18) else "NO (run after 18:00 for full effect)"
     print(f"       • after_hours: {after_h}")
 
-    _wait_for_agent(30)
-
-    # Cleanup USB files if real USB
+    _wait_for_agent(15)
     if use_real_usb:
         try:
             shutil.rmtree(usb_sim_dir, ignore_errors=True)
@@ -347,7 +345,7 @@ def attack_sabotage():
     _progress(file_count, file_count, "files created")
     print()
 
-    _wait_for_agent(15, "Letting agent see the files first")
+    _wait_for_agent(8, "Letting agent see the files first")
 
     # Phase 2: Mass deletion (the actual sabotage)
     print(f"\n  Phase 2: ⚠ SABOTAGE — Rapidly deleting all {file_count} files...")
@@ -388,7 +386,7 @@ def attack_sabotage():
     after_h = "YES ✓" if (datetime.now().hour < 8 or datetime.now().hour >= 18) else "NO"
     print(f"       • after_hours: {after_h}")
 
-    _wait_for_agent(30)
+    _wait_for_agent(15)
 
 
 # ═══════════════════════════════════════════════════════════
@@ -475,7 +473,7 @@ def attack_espionage():
     after_h = "YES ✓" if (datetime.now().hour < 8 or datetime.now().hour >= 18) else "NO"
     print(f"       • after_hours: {after_h}")
 
-    _wait_for_agent(30)
+    _wait_for_agent(15)
 
     # Close sockets
     for s in sockets:
@@ -559,7 +557,7 @@ def attack_fraud():
     after_h = "YES ✓" if (datetime.now().hour < 8 or datetime.now().hour >= 18) else "NO"
     print(f"       • after_hours: {after_h}")
 
-    _wait_for_agent(30)
+    _wait_for_agent(15)
 
 
 # ═══════════════════════════════════════════════════════════
@@ -633,10 +631,9 @@ def attack_abuse():
         with open(os.path.join(abuse_dir, fname), "wb") as f:
             f.write(os.urandom(1024))
         if (i + 1) % 100 == 0:
-            pct = int((i + 1) / file_count * 30)
-            bar = "█" * pct + "░" * (30 - pct)
-            print(f"  [{bar}] {i+1}/{file_count} files created", end="\r")
-    print(f"  [{'█' * 30}] {file_count}/{file_count} files created")
+            _progress(i + 1, file_count, "files created")
+    _progress(file_count, file_count, "files created")
+    print()
 
     # Phase 4: Rapidly read/modify files (boost file activity)
     print(f"  Phase 4: Rapidly accessing files (simulating resource abuse)...")
@@ -649,7 +646,10 @@ def attack_abuse():
                 _ = f.read()
         except Exception:
             pass
-    print(f"  → {file_count} files read back")
+        if (i + 1) % 100 == 0:
+            _progress(i + 1, file_count, "files read")
+    _progress(file_count, file_count, "files read")
+    print()
 
     print(f"\n  ✅ System Abuse activity complete!")
     print(f"     → {conn_count} TCP connections + {udp_count} UDP packets")
@@ -661,7 +661,7 @@ def attack_abuse():
     after_h = "YES ✓" if (datetime.now().hour < 8 or datetime.now().hour >= 18) else "NO"
     print(f"       • after_hours: {after_h}")
 
-    _wait_for_agent(30)
+    _wait_for_agent(15)
 
     # Close sockets
     for s in sockets:
@@ -762,7 +762,7 @@ def attack_combined():
     after_h = "YES ✓" if (datetime.now().hour < 8 or datetime.now().hour >= 18) else "NO"
     print(f"     → after_hours: {after_h}")
 
-    _wait_for_agent(30)
+    _wait_for_agent(15)
 
     for s in sockets:
         try:
@@ -792,7 +792,7 @@ def baseline_normal():
     print(f"  → 3 files created (minimal activity)")
     print(f"  → This should NOT trigger detection")
 
-    _wait_for_agent(20)
+    _wait_for_agent(12)
 
 
 # ═══════════════════════════════════════════════════════════

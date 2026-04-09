@@ -14,14 +14,27 @@ export default function Dashboard() {
 
   const fetchData = async () => {
     try {
-      const [statsRes, hostsRes, alertsRes] = await Promise.all([
+      const [statsRes, hostsRes, alertsRes, eventsRes] = await Promise.all([
         fetch(`${API_BASE}/api/dashboard/stats`),
         fetch(`${API_BASE}/api/hosts`),
         fetch(`${API_BASE}/api/alerts`),
+        fetch(`${API_BASE}/api/agent/alert-events`),
       ]);
       setStats(await statsRes.json());
       setHosts(await hostsRes.json());
       setAlerts(await alertsRes.json());
+      const eventsData = await eventsRes.json();
+      if (Array.isArray(eventsData) && eventsData.length > 0) {
+        setAgentEvents(prev => {
+          const existing = new Set(prev.map(e => e.time));
+          const merged = [...prev];
+          for (const evt of eventsData) {
+            if (!existing.has(evt.time)) merged.push(evt);
+          }
+          merged.sort((a, b) => (b.time || "").localeCompare(a.time || ""));
+          return merged.slice(0, 50);
+        });
+      }
     } catch (err) {
       console.error("Dashboard fetch error:", err);
     }
@@ -33,12 +46,15 @@ export default function Dashboard() {
 
     socket.on("host_update", fetchData);
     socket.on("new_alert", (alert) => {
-      setAlerts(prev => [alert, ...prev].slice(0, 50));
-      fetchData();
+      setAlerts(prev => [alert, ...prev].slice(0, 100));
     });
 
     socket.on("alert_status", (event) => {
-      setAgentEvents(prev => [event, ...prev].slice(0, 20));
+      setAgentEvents(prev => [event, ...prev].slice(0, 50));
+    });
+
+    socket.on("prevention_reset", () => {
+      setAgentEvents([]);
     });
 
     return () => {
@@ -46,6 +62,7 @@ export default function Dashboard() {
       socket.off("host_update");
       socket.off("new_alert");
       socket.off("alert_status");
+      socket.off("prevention_reset");
     };
   }, []);
 
@@ -64,6 +81,13 @@ export default function Dashboard() {
     <div className="dashboard">
       <Sidebar />
       <div className="main-content">
+
+        <style>{`
+          @keyframes blink {
+            0%, 100% { opacity: 1; transform: scale(1); }
+            50% { opacity: 0.3; transform: scale(1.15); }
+          }
+        `}</style>
 
         <div className="icondesign">
           <div className="icons"><LayoutDashboard size={36} /></div>
@@ -85,13 +109,43 @@ export default function Dashboard() {
           </div>
           <div className="stat-card">
             <h4><Shield size={16} style={{ marginRight: 6 }} /> Host Threats</h4>
-            <p style={{ color: hostAlerts > 0 ? "#ef4444" : "#22c55e" }}>{hostAlerts}</p>
-            <span className="stat-sub">from device agents</span>
+            {hostAlerts > 500 ? (
+              <div style={{ 
+                display: "flex", justifyContent: "center", alignItems: "center",
+                height: "60px"
+              }}>
+                <AlertTriangle 
+                  size={40} 
+                  style={{ 
+                    color: "#ef4444", 
+                    animation: "blink 1s ease-in-out infinite",
+                  }} 
+                />
+              </div>
+            ) : (
+              <p style={{ color: hostAlerts > 0 ? "#ef4444" : "#22c55e" }}>{hostAlerts}</p>
+            )}
+            <span className="stat-sub">{hostAlerts > 500 ? `${hostAlerts} threats detected!` : "from device agents"}</span>
           </div>
           <div className="stat-card">
             <h4><AlertTriangle size={16} style={{ marginRight: 6 }} /> Network Threats</h4>
-            <p style={{ color: networkAlerts > 0 ? "#ef4444" : "#22c55e" }}>{networkAlerts}</p>
-            <span className="stat-sub">from network traffic</span>
+            {networkAlerts > 500 ? (
+              <div style={{ 
+                display: "flex", justifyContent: "center", alignItems: "center",
+                height: "60px"
+              }}>
+                <AlertTriangle 
+                  size={40} 
+                  style={{ 
+                    color: "#ef4444", 
+                    animation: "blink 1s ease-in-out infinite",
+                  }} 
+                />
+              </div>
+            ) : (
+              <p style={{ color: networkAlerts > 0 ? "#ef4444" : "#22c55e" }}>{networkAlerts}</p>
+            )}
+            <span className="stat-sub">{networkAlerts > 500 ? `${networkAlerts} threats detected!` : "from network traffic"}</span>
           </div>
         </div>
 
@@ -144,14 +198,14 @@ export default function Dashboard() {
           </div>
         </div>
 
-        {/* Agent Alert Events — real-time dialog status */}
+        {/* Agent Alert Events — only visible when events exist */}
         {agentEvents.length > 0 && (
-          <div className="panel" style={{ marginBottom: "20px", borderLeft: "3px solid #ef4444" }}>
-            <h3 style={{ display: "flex", alignItems: "center", gap: "8px" }}>
-              <span style={{ display: "inline-block", width: "8px", height: "8px", borderRadius: "50%", background: "#ef4444", animation: "pulse 1.5s infinite" }}></span>
-              Live Agent Events
-            </h3>
-            <div style={{ maxHeight: "160px", overflowY: "auto", display: "flex", flexDirection: "column", gap: "4px", padding: "6px 0" }}>
+        <div className="panel" style={{ marginBottom: "20px", borderLeft: "3px solid #ef4444" }}>
+          <h3 style={{ display: "flex", alignItems: "center", gap: "8px" }}>
+            <span style={{ display: "inline-block", width: "8px", height: "8px", borderRadius: "50%", background: "#ef4444", animation: "pulse 1.5s infinite" }}></span>
+            Live Agent Events
+          </h3>
+          <div className="hide-scrollbar" style={{ maxHeight: "160px", overflowY: "auto", display: "flex", flexDirection: "column", gap: "4px", padding: "6px 0", scrollbarWidth: "none", msOverflowStyle: "none" }}>
               {agentEvents.map((evt, i) => (
                 <div key={i} style={{
                   display: "flex", alignItems: "center", gap: "10px",
@@ -170,8 +224,8 @@ export default function Dashboard() {
                   </span>
                 </div>
               ))}
-            </div>
           </div>
+        </div>
         )}
 
         {/* Recent Activity */}

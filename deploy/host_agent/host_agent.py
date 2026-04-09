@@ -368,10 +368,11 @@ def _count_recent_files(max_age_seconds=300, max_scan_time=5):
         for base, dirs, files in os.walk(scan_root):
             if time.time() > deadline:
                 return count
-            # Skip deep/hidden/large dirs that slow scanning
+            # Skip deep/hidden/large dirs that slow scanning and cause false positives
             dirs[:] = [d for d in dirs if not d.startswith('.') and d not in
                        ('node_modules', '__pycache__', '.git', 'venv', '.venv',
-                        'AppData', '.cache', 'site-packages')]
+                        'AppData', '.cache', 'site-packages', 'dist', '.next',
+                        '.nuxt', 'build', '.parcel-cache', '.angular')]
             for name in files:
                 try:
                     path = os.path.join(base, name)
@@ -887,7 +888,9 @@ def collect_features(window_seconds=5):
         delta_connections = 0
 
     # File activity — count recently modified files
-    recent_files = _count_recent_files(300)
+    # Use a short window (45s ≈ 3 agent cycles) to avoid counting old activity.
+    # 300s was too long and caused false positives from normal IDE/browser usage.
+    recent_files = _count_recent_files(45)
 
     # USB / removable device monitoring
     new_drive_count, new_drives, removed_drives = _detect_drive_changes()
@@ -926,9 +929,10 @@ def collect_features(window_seconds=5):
         total_device_activities = max(total_device_activities, _usb_cached_weight)
 
     # ── File-based device inference ──
-    # Mass file operations (>100 files) indicate heavy disk I/O, which maps
+    # Mass file operations (>250 files in 45s) indicate heavy disk I/O, which maps
     # to CERT device_activities even without USB. The disk IS being used.
-    if recent_files > 100:
+    # Threshold raised from 100 to 250 to avoid false positives from IDE/builds.
+    if recent_files > 250:
         file_io_weight = min(float(recent_files) * 0.25, 500.0)
         total_device_activities = max(total_device_activities, file_io_weight)
 
@@ -946,13 +950,13 @@ def collect_features(window_seconds=5):
     # ── Activity-based logon inference ──
     # CERT model requires logon features to classify as attack. In real-world
     # observation, connection deltas often miss attack sockets (opened before window).
-    # If we observe high file activity (>100 files) or USB usage, someone IS actively
-    # using the machine — infer a minimum logon count.
-    #   Normal: files < 100, no USB → logon stays 0 (no inference) ✓
-    #   Attack: files > 100 or USB → logon = max(observed, 2.0)  ✓
+    # If we observe high file activity (>250 files in 45s) or USB usage, someone IS
+    # actively using the machine — infer a minimum logon count.
+    #   Normal: files < 250, no USB → logon stays 0 (no inference) ✓
+    #   Attack: files > 250 or USB → logon = max(observed, 2.0)  ✓
     ACTIVITY_LOGON_FLOOR = 2.0
     usb_active = new_drive_count > 0 or (time.time() - _usb_last_detection_time < _USB_PERSIST_SECONDS)
-    if recent_files > 100 or usb_active:
+    if recent_files > 250 or usb_active:
         total_logons = max(total_logons, ACTIVITY_LOGON_FLOOR)
 
     features = [

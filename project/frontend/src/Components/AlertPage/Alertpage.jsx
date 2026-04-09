@@ -11,9 +11,23 @@ export default function AlertsPage() {
 
   const fetchAlerts = async () => {
     try {
-      const res = await fetch(`${API_BASE}/api/alerts`);
-      const data = await res.json();
-      setAlerts(data);
+      const [alertsRes, eventsRes] = await Promise.all([
+        fetch(`${API_BASE}/api/alerts`),
+        fetch(`${API_BASE}/api/agent/alert-events`),
+      ]);
+      setAlerts(await alertsRes.json());
+      const eventsData = await eventsRes.json();
+      if (Array.isArray(eventsData) && eventsData.length > 0) {
+        setAgentEvents(prev => {
+          const existing = new Set(prev.map(e => e.time));
+          const merged = [...prev];
+          for (const evt of eventsData) {
+            if (!existing.has(evt.time)) merged.push(evt);
+          }
+          merged.sort((a, b) => (b.time || "").localeCompare(a.time || ""));
+          return merged.slice(0, 50);
+        });
+      }
     } catch (err) {
       console.error("Alerts fetch error:", err);
     }
@@ -31,10 +45,15 @@ export default function AlertsPage() {
       setAgentEvents(prev => [event, ...prev].slice(0, 50));
     });
 
+    socket.on("prevention_reset", () => {
+      setAgentEvents([]);
+    });
+
     return () => {
       clearInterval(interval);
       socket.off("new_alert");
       socket.off("alert_status");
+      socket.off("prevention_reset");
     };
   }, []);
 
@@ -85,19 +104,24 @@ export default function AlertsPage() {
           </div>
         </div>
 
-        {/* Live Agent Events — real-time alert dialog status */}
-        {agentEvents.length > 0 && (
-          <div className="panel" style={{ marginBottom: "20px" }}>
-            <h3 style={{ display: "flex", alignItems: "center", gap: "8px" }}>
-              <span style={{ display: "inline-block", width: "8px", height: "8px", borderRadius: "50%", background: "#ef4444", animation: "pulse 1.5s infinite" }}></span>
-              Live Agent Events
-            </h3>
-            <div style={{
-              maxHeight: "220px", overflowY: "auto",
-              display: "flex", flexDirection: "column", gap: "6px",
-              padding: "8px 0"
-            }}>
-              {agentEvents.map((evt, i) => (
+        {/* Live Agent Events — always visible */}
+        <div className="panel" style={{ marginBottom: "20px" }}>
+          <h3 style={{ display: "flex", alignItems: "center", gap: "8px" }}>
+            <span style={{ display: "inline-block", width: "8px", height: "8px", borderRadius: "50%", background: agentEvents.length > 0 ? "#ef4444" : "#475569", animation: agentEvents.length > 0 ? "pulse 1.5s infinite" : "none" }}></span>
+            Live Agent Events
+          </h3>
+          <div className="hide-scrollbar" style={{
+            maxHeight: "220px", overflowY: "auto",
+            display: "flex", flexDirection: "column", gap: "6px",
+            padding: "8px 0",
+            scrollbarWidth: "none", msOverflowStyle: "none"
+          }}>
+            {agentEvents.length === 0 ? (
+              <div style={{ color: "#475569", fontSize: "13px", textAlign: "center", padding: "20px 0" }}>
+                No agent events yet — waiting for activity...
+              </div>
+            ) : (
+              agentEvents.map((evt, i) => (
                 <div key={i} style={{
                   display: "flex", alignItems: "center", gap: "12px",
                   padding: "10px 14px",
@@ -115,10 +139,10 @@ export default function AlertsPage() {
                     {evt.time ? new Date(evt.time).toLocaleTimeString() : ""}
                   </span>
                 </div>
-              ))}
-            </div>
+              ))
+            )}
           </div>
-        )}
+        </div>
 
         {/* Alerts Table */}
         <div className="panel">
