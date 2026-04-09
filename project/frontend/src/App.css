@@ -518,6 +518,15 @@ th {
 .hide-scrollbar { scrollbar-width: none; -ms-overflow-style: none; }
 .hide-scrollbar::-webkit-scrollbar { display: none; }
 
+/* Archive list: ~10 rows visible, hidden scrollbar */
+.archive-scroll-list {
+  max-height: 420px;
+  overflow-y: auto;
+  scrollbar-width: none;
+  -ms-overflow-style: none;
+}
+.archive-scroll-list::-webkit-scrollbar { display: none; }
+
 /* ================= Sidebar Controls (Network page) ================= */
 .sidebar-controls {
   margin-top: 20px;

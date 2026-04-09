@@ -495,6 +495,7 @@ export default function Controls() {
               <h2>Alert Archives</h2>
             </div>
             {archives.length > 0 ? (
+              <div className="archive-scroll-list">
               <table>
                 <thead><tr><th>File</th><th>Size</th><th>Action</th></tr></thead>
                 <tbody>
@@ -507,6 +508,7 @@ export default function Controls() {
                   ))}
                 </tbody>
               </table>
+              </div>
             ) : (
               <p style={{ color: "#6b7280", fontStyle: "italic" }}>No archives yet</p>
             )}
@@ -629,6 +631,7 @@ export default function Controls() {
               <h2>Host Archives</h2>
             </div>
             {hostArchives.length > 0 ? (
+              <div className="archive-scroll-list">
               <table>
                 <thead><tr><th>File</th><th>Type</th><th>Size</th><th>Actions</th></tr></thead>
                 <tbody>
@@ -653,6 +656,7 @@ export default function Controls() {
                   ))}
                 </tbody>
               </table>
+              </div>
             ) : (
               <p style={{ color: "#6b7280", fontStyle: "italic" }}>No host archives yet</p>
             )}
