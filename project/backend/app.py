@@ -340,6 +340,15 @@ def create_app():
         ModelLoader.load()
         InsiderThreatResponseOrchestrator.initialize_and_reset(app.config)
 
+        # Load host thresholds from thresholds.ini config file
+        from routes.dashboard import _load_host_thresholds_from_ini
+        host_th = _load_host_thresholds_from_ini()
+        InsiderThreatResponseOrchestrator.update_thresholds(
+            low=host_th["low"], medium=host_th["medium"], critical=host_th["critical"]
+        )
+        print(f"[CONFIG] Host thresholds from config: low={host_th['low']}, "
+              f"medium={host_th['medium']}, critical={host_th['critical']}")
+
     # ── Start heartbeat monitor thread ──
     monitor = threading.Thread(target=_heartbeat_monitor, args=(app,), daemon=True)
     monitor.start()

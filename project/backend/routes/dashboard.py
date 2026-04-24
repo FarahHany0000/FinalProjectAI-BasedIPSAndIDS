@@ -2,6 +2,7 @@ import os
 import json
 import shutil
 import datetime
+import configparser
 from flask import Blueprint, jsonify, request
 from controllers.host_controller import HostController
 from controllers.alert_controller import AlertController
@@ -14,8 +15,16 @@ from extensions import db, socketio
 
 dashboard_bp = Blueprint("dashboard", __name__)
 
-# ── Threshold persistence ──
-_THRESHOLD_FILE = os.path.join(os.path.dirname(__file__), "..", "threshold_config.json")
+# ── Threshold config file (INI) ──
+_THRESHOLDS_INI = os.path.join(os.path.dirname(__file__), "..", "thresholds.ini")
+
+# Safety floors — thresholds cannot go below these values
+_MIN_BINARY_THRESHOLD = 0.50
+_MIN_CLASSIFICATION_THRESHOLD = 0.40
+_MIN_HOST_LOW = 0.30
+_MIN_HOST_MEDIUM = 0.50
+_MIN_HOST_CRITICAL = 0.70
+
 _DEFAULT_CONFIG = {
     "threshold": 0.70,
     "classification_threshold": 0.50,
@@ -26,35 +35,69 @@ _DEFAULT_CONFIG = {
 }
 
 def _load_persisted_config():
-    """Load thresholds from JSON file if it exists, else use defaults."""
+    """Load network thresholds from thresholds.ini, enforcing safety floors."""
     config = dict(_DEFAULT_CONFIG)
     try:
-        if os.path.exists(_THRESHOLD_FILE):
-            with open(_THRESHOLD_FILE, "r") as f:
-                saved = json.load(f)
-            for key in ("threshold", "classification_threshold", "display_mode"):
-                if key in saved:
-                    config[key] = saved[key]
-            print(f"[CONFIG] Loaded persisted thresholds: binary={config['threshold']}, "
-                  f"classification={config['classification_threshold']}")
+        if os.path.exists(_THRESHOLDS_INI):
+            ini = configparser.ConfigParser()
+            ini.read(_THRESHOLDS_INI, encoding="utf-8")
+            if ini.has_section("network_thresholds"):
+                raw_binary = float(ini.get("network_thresholds", "binary_threshold", fallback="0.70"))
+                raw_class = float(ini.get("network_thresholds", "classification_threshold", fallback="0.50"))
+                raw_mode = ini.get("network_thresholds", "display_mode", fallback="full").strip()
+
+                config["threshold"] = max(raw_binary, _MIN_BINARY_THRESHOLD)
+                config["classification_threshold"] = max(raw_class, _MIN_CLASSIFICATION_THRESHOLD)
+                config["display_mode"] = raw_mode if raw_mode in ("full", "binary") else "full"
+
+                if raw_binary < _MIN_BINARY_THRESHOLD:
+                    print(f"[CONFIG] WARNING: binary_threshold={raw_binary} below minimum {_MIN_BINARY_THRESHOLD}, forced to {_MIN_BINARY_THRESHOLD}")
+                if raw_class < _MIN_CLASSIFICATION_THRESHOLD:
+                    print(f"[CONFIG] WARNING: classification_threshold={raw_class} below minimum {_MIN_CLASSIFICATION_THRESHOLD}, forced to {_MIN_CLASSIFICATION_THRESHOLD}")
+
+            print(f"[CONFIG] Loaded thresholds from thresholds.ini: "
+                  f"binary={config['threshold']}, classification={config['classification_threshold']}")
     except Exception as e:
-        print(f"[CONFIG] Could not load threshold file: {e}")
+        print(f"[CONFIG] Could not load thresholds.ini: {e}")
     return config
 
-def _save_persisted_config():
-    """Save current thresholds to JSON file for persistence across restarts."""
+def _load_host_thresholds_from_ini():
+    """Load host threat thresholds from thresholds.ini, enforcing safety floors."""
+    defaults = {"low": 0.50, "medium": 0.70, "critical": 0.90}
     try:
-        to_save = {
-            "threshold": _runtime_config["threshold"],
-            "classification_threshold": _runtime_config["classification_threshold"],
-            "display_mode": _runtime_config.get("display_mode", "full"),
-        }
-        with open(_THRESHOLD_FILE, "w") as f:
-            json.dump(to_save, f, indent=2)
-    except Exception as e:
-        print(f"[CONFIG] Could not save threshold file: {e}")
+        if os.path.exists(_THRESHOLDS_INI):
+            ini = configparser.ConfigParser()
+            ini.read(_THRESHOLDS_INI, encoding="utf-8")
+            if ini.has_section("host_thresholds"):
+                raw_low = float(ini.get("host_thresholds", "low", fallback="0.50"))
+                raw_med = float(ini.get("host_thresholds", "medium", fallback="0.70"))
+                raw_crit = float(ini.get("host_thresholds", "critical", fallback="0.90"))
 
-# ── Runtime config (loads persisted values on startup) ──
+                low = max(raw_low, _MIN_HOST_LOW)
+                medium = max(raw_med, _MIN_HOST_MEDIUM)
+                critical = max(raw_crit, _MIN_HOST_CRITICAL)
+
+                if raw_low < _MIN_HOST_LOW:
+                    print(f"[CONFIG] WARNING: host low={raw_low} below minimum {_MIN_HOST_LOW}, forced to {_MIN_HOST_LOW}")
+                if raw_med < _MIN_HOST_MEDIUM:
+                    print(f"[CONFIG] WARNING: host medium={raw_med} below minimum {_MIN_HOST_MEDIUM}, forced to {_MIN_HOST_MEDIUM}")
+                if raw_crit < _MIN_HOST_CRITICAL:
+                    print(f"[CONFIG] WARNING: host critical={raw_crit} below minimum {_MIN_HOST_CRITICAL}, forced to {_MIN_HOST_CRITICAL}")
+
+                if not (0 <= low < medium < critical <= 1):
+                    print(f"[CONFIG] WARNING: host thresholds violate 0 <= low < medium < critical <= 1, using defaults")
+                    return defaults
+
+                return {"low": low, "medium": medium, "critical": critical}
+    except Exception as e:
+        print(f"[CONFIG] Could not load host thresholds: {e}")
+    return defaults
+
+def _save_persisted_config():
+    """No-op: thresholds are now controlled via thresholds.ini config file."""
+    pass
+
+# ── Runtime config (loads from thresholds.ini on startup) ──
 _runtime_config = _load_persisted_config()
 
 

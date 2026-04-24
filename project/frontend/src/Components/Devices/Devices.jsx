@@ -1,4 +1,4 @@
-import React, { useEffect, useMemo, useState } from "react";
+import React, { useEffect, useMemo, useState, useCallback, useRef } from "react";
 import { useNavigate } from "react-router-dom";
 import Sidebar from "../Sidebar/Sidebar";
 import API_BASE from "../../config";
@@ -9,8 +9,9 @@ export default function Devices() {
   const navigate = useNavigate();
   const [hosts, setHosts] = useState([]);
   const [agents, setAgents] = useState([]);
+  const debounceRef = useRef(null);
 
-  const fetchData = async () => {
+  const fetchData = useCallback(async () => {
     try {
       const [hostsRes, agentsRes] = await Promise.all([
         fetch(`${API_BASE}/api/hosts`),
@@ -18,24 +19,30 @@ export default function Devices() {
       ]);
       setHosts(await hostsRes.json());
       setAgents(await agentsRes.json());
-    } catch (err) {
-      console.error("Devices fetch error:", err);
+    } catch {
+      // silent
     }
-  };
+  }, []);
+
+  const debouncedFetch = useCallback(() => {
+    if (debounceRef.current) clearTimeout(debounceRef.current);
+    debounceRef.current = setTimeout(fetchData, 2000);
+  }, [fetchData]);
 
   useEffect(() => {
     fetchData();
-    const interval = setInterval(fetchData, 10000);
+    const interval = setInterval(fetchData, 30000);
 
-    socket.on("host_update", fetchData);
-    socket.on("agent_update", fetchData);
+    socket.on("host_update", debouncedFetch);
+    socket.on("agent_update", debouncedFetch);
 
     return () => {
       clearInterval(interval);
+      if (debounceRef.current) clearTimeout(debounceRef.current);
       socket.off("host_update");
       socket.off("agent_update");
     };
-  }, []);
+  }, [fetchData, debouncedFetch]);
 
   const isOnline = (lastSeen) => {
     if (!lastSeen) return false;
@@ -103,8 +110,8 @@ export default function Devices() {
     try {
       await fetch(`${API_BASE}/api/agents/${agent.id}/approve`, { method: "POST" });
       fetchData();
-    } catch (err) {
-      console.error("Approve error:", err);
+    } catch {
+      // silent
     }
   };
 
@@ -115,8 +122,8 @@ export default function Devices() {
     try {
       await fetch(`${API_BASE}/api/agents/${agent.id}/reject`, { method: "POST" });
       fetchData();
-    } catch (err) {
-      console.error("Reject error:", err);
+    } catch {
+      // silent
     }
   };
 

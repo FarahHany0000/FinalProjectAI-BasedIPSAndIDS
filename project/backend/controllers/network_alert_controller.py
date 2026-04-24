@@ -152,10 +152,9 @@ class NetworkAlertController:
     @staticmethod
     def _auto_block_check(src_ip: str, attack_type: str) -> bool:
         """
-        Auto-block logic with severity-based thresholds:
-        - Critical (DDoS, SYNFlood, ARPSpoof): Block IMMEDIATELY (1 alert)
-        - High (SSHBrute, FTPBrute, ICMP Flood): Block after 2 alerts
-        - Medium (PortScan): Block after 5 alerts
+        Immediate auto-block logic:
+        - Block on first detected attack when prevention is enabled.
+        - No rate-limit window or severity-based threshold checks.
         Thread-safe with lock to prevent duplicate blocks.
         """
         try:
@@ -164,37 +163,20 @@ class NetworkAlertController:
             if not _runtime_config.get("prevention_enabled", False):
                 return False
 
-            severity = NetworkAlertController.SEVERITY_MAP.get(attack_type, "Medium")
-            threshold = NetworkAlertController.RATE_LIMIT_BY_SEVERITY.get(
-                severity, NetworkAlertController.RATE_LIMIT_MAX
-            )
-
             with _block_lock:
                 if src_ip in _runtime_config.get("blocked_ips", []):
                     return True  # already blocked
 
-                # Track alert rate for this IP
-                now = time.time()
-                history = NetworkAlertController._ip_alert_history
-                if src_ip not in history:
-                    history[src_ip] = []
+                success = _apply_firewall_block(src_ip)
+                if not success:
+                    return False
 
-                # Clean old entries outside the window
-                window = NetworkAlertController.RATE_LIMIT_WINDOW
-                history[src_ip] = [t for t in history[src_ip] if now - t < window]
-                history[src_ip].append(now)
-
-                # If IP exceeded threshold for this severity → auto-block
-                if len(history[src_ip]) >= threshold:
-                    success = _apply_firewall_block(src_ip)
-                    _runtime_config["blocked_ips"].append(src_ip)
-                    history[src_ip] = []  # reset counter
-                    print(f"[AUTO-BLOCK] Blocked {src_ip} — {attack_type} ({severity}, "
-                          f"threshold={threshold})")
-                    socketio.emit("config_update", {
-                        "blocked_ips": _runtime_config["blocked_ips"],
-                    })
-                    return True
+                _runtime_config["blocked_ips"].append(src_ip)
+                print(f"[AUTO-BLOCK] Blocked {src_ip} — {attack_type} (immediate)")
+                socketio.emit("config_update", {
+                    "blocked_ips": _runtime_config["blocked_ips"],
+                })
+                return True
 
             return False
         except Exception as e:

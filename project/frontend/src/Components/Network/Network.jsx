@@ -25,19 +25,23 @@ export default function Network() {
         const t = await threshRes.json();
         if (t.display_mode) setDisplayMode(t.display_mode);
       }
-    } catch (err) {
-      console.error("Network fetch error:", err);
+    } catch {
+      // silent
     }
   }, []);
 
   useEffect(() => {
     fetchData();
-    const interval = setInterval(fetchData, 8000);
+    const interval = setInterval(fetchData, 30000);
 
     socket.on("new_alert", (alert) => {
       if (alert.source_type === "network") {
         setAlerts((prev) => [alert, ...prev].slice(0, 100));
-        setStats((prev) => ({ ...prev, total_alerts: prev.total_alerts + 1 }));
+        setStats((prev) => ({
+          ...prev,
+          total_alerts: prev.total_alerts + 1,
+          blocked_attacks: alert.is_blocked ? prev.blocked_attacks + 1 : prev.blocked_attacks,
+        }));
       }
     });
 
@@ -60,7 +64,7 @@ export default function Network() {
 
   return (
     <div className="dashboard">
-      <Sidebar activePage="network" prevention={prevention} />
+      <Sidebar activePage="network" />
       <div className="main-content">
 
         {/* Header */}
@@ -152,7 +156,6 @@ export default function Network() {
                   ) : (
                     <th>Attack Type</th>
                   )}
-                  <th>Confidence</th>
                   <th>Source IP</th>
                   <th>Dest IP</th>
                   <th>Port</th>
@@ -169,7 +172,6 @@ export default function Network() {
                       ) : (
                         <td><strong>{a.threat}</strong></td>
                       )}
-                      <td>{((a.confidence || 0) * 100).toFixed(1)}%</td>
                       <td style={{ fontFamily: "monospace", fontSize: "0.8rem" }}>{a.src_ip || "-"}</td>
                       <td style={{ fontFamily: "monospace", fontSize: "0.8rem" }}>{a.dst_ip || "-"}</td>
                       <td>{a.dst_port || "-"}</td>
@@ -185,7 +187,7 @@ export default function Network() {
                   ))
                 ) : (
                   <tr>
-                    <td colSpan={7} className="empty-logs">
+                    <td colSpan={6} className="empty-logs">
                       No network attacks detected yet. Network sensor monitoring traffic...
                     </td>
                   </tr>

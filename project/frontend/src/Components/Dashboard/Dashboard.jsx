@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from "react";
+import React, { useState, useEffect, useCallback, useRef, useMemo } from "react";
 import { useNavigate } from "react-router-dom";
 import Sidebar from "../Sidebar/Sidebar";
 import API_BASE from "../../config";
@@ -11,8 +11,9 @@ export default function Dashboard() {
   const [hosts, setHosts] = useState([]);
   const [alerts, setAlerts] = useState([]);
   const [agentEvents, setAgentEvents] = useState([]);
+  const debounceRef = useRef(null);
 
-  const fetchData = async () => {
+  const fetchData = useCallback(async () => {
     try {
       const [statsRes, hostsRes, alertsRes, eventsRes] = await Promise.all([
         fetch(`${API_BASE}/api/dashboard/stats`),
@@ -20,10 +21,12 @@ export default function Dashboard() {
         fetch(`${API_BASE}/api/alerts`),
         fetch(`${API_BASE}/api/agent/alert-events`),
       ]);
-      setStats(await statsRes.json());
-      setHosts(await hostsRes.json());
-      setAlerts(await alertsRes.json());
-      const eventsData = await eventsRes.json();
+      const [statsData, hostsData, alertsData, eventsData] = await Promise.all([
+        statsRes.json(), hostsRes.json(), alertsRes.json(), eventsRes.json(),
+      ]);
+      setStats(statsData);
+      setHosts(hostsData);
+      setAlerts(alertsData);
       if (Array.isArray(eventsData) && eventsData.length > 0) {
         setAgentEvents(prev => {
           const existing = new Set(prev.map(e => e.time));
@@ -35,44 +38,51 @@ export default function Dashboard() {
           return merged.slice(0, 50);
         });
       }
-    } catch (err) {
-      console.error("Dashboard fetch error:", err);
+    } catch {
+      // silent
     }
-  };
+  }, []);
+
+  const debouncedFetch = useCallback(() => {
+    if (debounceRef.current) clearTimeout(debounceRef.current);
+    debounceRef.current = setTimeout(fetchData, 2000);
+  }, [fetchData]);
 
   useEffect(() => {
     fetchData();
-    const interval = setInterval(fetchData, 15000);
+    const interval = setInterval(fetchData, 30000);
 
-    socket.on("host_update", fetchData);
+    socket.on("host_update", debouncedFetch);
     socket.on("new_alert", (alert) => {
       setAlerts(prev => [alert, ...prev].slice(0, 100));
+      if (alert.source_type === "network") {
+        setStats(prev => prev ? { ...prev, network_alerts: (prev.network_alerts || 0) + 1 } : prev);
+      }
     });
-
     socket.on("alert_status", (event) => {
       setAgentEvents(prev => [event, ...prev].slice(0, 50));
     });
-
     socket.on("prevention_reset", () => {
       setAgentEvents([]);
     });
 
     return () => {
       clearInterval(interval);
+      if (debounceRef.current) clearTimeout(debounceRef.current);
       socket.off("host_update");
       socket.off("new_alert");
       socket.off("alert_status");
       socket.off("prevention_reset");
     };
-  }, []);
+  }, [fetchData, debouncedFetch]);
 
-  const isOnline = (lastSeen) => {
+  const isOnline = useCallback((lastSeen) => {
     if (!lastSeen) return false;
     return (new Date() - new Date(lastSeen)) / 1000 < 30;
-  };
+  }, []);
 
-  const onlineHosts = hosts.filter(h => isOnline(h.last_seen));
-  const offlineHosts = hosts.filter(h => !isOnline(h.last_seen));
+  const onlineHosts = useMemo(() => hosts.filter(h => isOnline(h.last_seen)), [hosts, isOnline]);
+  const offlineHosts = useMemo(() => hosts.filter(h => !isOnline(h.last_seen)), [hosts, isOnline]);
   const totalAlerts = stats?.total_alerts || 0;
   const hostAlerts = stats?.host_alerts || 0;
   const networkAlerts = stats?.network_alerts || 0;

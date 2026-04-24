@@ -3,7 +3,6 @@ import Sidebar from "../Sidebar/Sidebar";
 import socket from "../../socket";
 import API_BASE from "../../config";
 import {
-  SlidersHorizontal,
   ShieldCheck,
   ShieldOff,
   Trash2,
@@ -22,17 +21,13 @@ export default function Controls() {
 
   /* ── State ── */
   const [threshold, setThreshold] = useState(0.7);
-  const [thresholdInput, setThresholdInput] = useState("0.70");
   const [classThreshold, setClassThreshold] = useState(0.5);
-  const [classThresholdInput, setClassThresholdInput] = useState("0.50");
-  const [showAdvanced, setShowAdvanced] = useState(false);
   const [prevention, setPrevention] = useState({ enabled: false, blocked_ips: [] });
   const [displayMode, setDisplayMode] = useState("full");
   const [archives, setArchives] = useState([]);
   const [showArchives, setShowArchives] = useState(false);
   const [archiveData, setArchiveData] = useState(null);
   const [archiveFilename, setArchiveFilename] = useState("");
-  const [saving, setSaving] = useState(false);
   const [showQuickActions, setShowQuickActions] = useState(false);
   const [showHostQuickActions, setShowHostQuickActions] = useState(false);
   const [confirmModal, setConfirmModal] = useState({ show: false, title: "", message: "", onConfirm: null });
@@ -40,8 +35,6 @@ export default function Controls() {
 
   // Host Prevention State
   const [hostPrevention, setHostPrevention] = useState(null);
-  const [hostThresholds, setHostThresholds] = useState({ low: "0.50", medium: "0.70", critical: "0.90" });
-  const [hostSaving, setHostSaving] = useState(false);
   const [hostLogs, setHostLogs] = useState([]);
 
   // Host Archives State
@@ -62,10 +55,8 @@ export default function Controls() {
       if (threshRes.ok) {
         const t = await threshRes.json();
         setThreshold(t.threshold);
-        setThresholdInput(t.threshold.toFixed(2));
         if (t.classification_threshold !== undefined) {
           setClassThreshold(t.classification_threshold);
-          setClassThresholdInput(t.classification_threshold.toFixed(2));
         }
         if (t.display_mode) setDisplayMode(t.display_mode);
       }
@@ -73,20 +64,13 @@ export default function Controls() {
       if (hostPrevRes.ok) {
         const hp = await hostPrevRes.json();
         setHostPrevention(hp);
-        if (hp.thresholds) {
-          setHostThresholds({
-            low: hp.thresholds.low?.toFixed(2) || "0.50",
-            medium: hp.thresholds.medium?.toFixed(2) || "0.70",
-            critical: hp.thresholds.critical?.toFixed(2) || "0.90",
-          });
-        }
       }
       if (hostLogsRes.ok) {
         const logs = await hostLogsRes.json();
         setHostLogs(logs.filter(l => l.decision_level && l.decision_level !== "NONE"));
       }
-    } catch (err) {
-      console.error("Controls fetch error:", err);
+    } catch {
+      // silent
     }
   }, []);
 
@@ -95,11 +79,9 @@ export default function Controls() {
     socket.on("config_update", (config) => {
       if (config.threshold !== undefined) {
         setThreshold(config.threshold);
-        setThresholdInput(config.threshold.toFixed(2));
       }
       if (config.classification_threshold !== undefined) {
         setClassThreshold(config.classification_threshold);
-        setClassThresholdInput(config.classification_threshold.toFixed(2));
       }
       if (config.prevention_enabled !== undefined || config.blocked_ips !== undefined) {
         setPrevention((prev) => ({ ...prev, ...config }));
@@ -119,30 +101,6 @@ export default function Controls() {
     setTimeout(() => setToast({ show: false, message: "" }), 3000);
   };
 
-  const applyThresholds= async () => {
-    const val1 = parseFloat(thresholdInput);
-    const val2 = parseFloat(classThresholdInput);
-    if (isNaN(val1) || val1 < 0 || val1 > 1) return;
-    if (isNaN(val2) || val2 < 0 || val2 > 1) return;
-    setSaving(true);
-    try {
-      await fetch(`${API_BASE}/api/network/threshold`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          threshold: val1,
-          classification_threshold: val2,
-          display_mode: displayMode,
-        }),
-      });
-      setThreshold(val1);
-      setClassThreshold(val2);
-    } catch (err) {
-      console.error("Threshold error:", err);
-    }
-    setTimeout(() => setSaving(false), 600);
-  };
-
   const togglePrevention = async () => {
     try {
       const res = await fetch(`${API_BASE}/api/network/prevention`, {
@@ -151,8 +109,7 @@ export default function Controls() {
         body: JSON.stringify({ enabled: !prevention.enabled }),
       });
       if (res.ok) setPrevention(await res.json());
-    } catch (err) {
-      console.error("Prevention error:", err);
+    } catch {
     }
   };
 
@@ -164,8 +121,7 @@ export default function Controls() {
         body: JSON.stringify({ ip }),
       });
       if (res.ok) fetchData();
-    } catch (err) {
-      console.error("Unblock error:", err);
+    } catch {
     }
   };
 
@@ -177,7 +133,7 @@ export default function Controls() {
           headers: { "Content-Type": "application/json" },
         });
         if (res.ok) fetchData();
-      } catch (err) { console.error("Reset error:", err); }
+      } catch { /* silent */ }
       closeConfirm();
     });
   };
@@ -191,7 +147,7 @@ export default function Controls() {
           showToast(`✅ Archived ${data.archived} alerts`);
           fetchArchives();
         }
-      } catch (err) { console.error("Archive error:", err); }
+      } catch { /* silent */ }
       closeConfirm();
     });
   };
@@ -200,8 +156,7 @@ export default function Controls() {
     try {
       const res = await fetch(`${API_BASE}/api/alerts/archives`);
       if (res.ok) setArchives(await res.json());
-    } catch (err) {
-      console.error("Archives error:", err);
+    } catch {
     }
   };
 
@@ -212,32 +167,8 @@ export default function Controls() {
         setArchiveData(await res.json());
         setArchiveFilename(filename);
       }
-    } catch (err) {
-      console.error("Load archive error:", err);
+    } catch {
     }
-  };
-
-  const applyHostThresholds = async () => {
-    const low = parseFloat(hostThresholds.low);
-    const medium = parseFloat(hostThresholds.medium);
-    const critical = parseFloat(hostThresholds.critical);
-    if (isNaN(low) || isNaN(medium) || isNaN(critical)) return;
-    if (!(0 <= low && low < medium && medium < critical && critical <= 1)) {
-      showToast("⚠ Thresholds must be: 0 ≤ Low < Medium < Critical ≤ 1");
-      return;
-    }
-    setHostSaving(true);
-    try {
-      await fetch(`${API_BASE}/api/prevention/thresholds`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ low, medium, critical }),
-      });
-      fetchData();
-    } catch (err) {
-      console.error("Host threshold error:", err);
-    }
-    setTimeout(() => setHostSaving(false), 600);
   };
 
   const archiveHostLogs = () => {
@@ -250,7 +181,7 @@ export default function Controls() {
           fetchHostArchives();
           fetchData();
         }
-      } catch (err) { console.error("Host archive error:", err); }
+      } catch { /* silent */ }
       closeConfirm();
     });
   };
@@ -263,7 +194,7 @@ export default function Controls() {
           showToast("✅ All host logs cleared");
           fetchData();
         }
-      } catch (err) { console.error("Clear host logs error:", err); }
+      } catch { /* silent */ }
       closeConfirm();
     });
   };
@@ -272,8 +203,7 @@ export default function Controls() {
     try {
       const res = await fetch(`${API_BASE}/api/host-alerts/archives`);
       if (res.ok) setHostArchives(await res.json());
-    } catch (err) {
-      console.error("Host archives error:", err);
+    } catch {
     }
   };
 
@@ -284,8 +214,7 @@ export default function Controls() {
         setHostArchiveData(await res.json());
         setHostArchiveFilename(filename);
       }
-    } catch (err) {
-      console.error("Load host archive error:", err);
+    } catch {
     }
   };
 
@@ -294,7 +223,7 @@ export default function Controls() {
       try {
         const res = await fetch(`${API_BASE}/api/host-alerts/archives/${filename}`, { method: "DELETE" });
         if (res.ok) fetchHostArchives();
-      } catch (err) { console.error("Delete host archive error:", err); }
+      } catch { /* silent */ }
       closeConfirm();
     });
   };
@@ -302,7 +231,7 @@ export default function Controls() {
   /* ── Render ── */
   return (
     <div className="dashboard">
-      <Sidebar prevention={prevention} />
+      <Sidebar />
       <div className="main-content">
 
         <style>{`
@@ -319,37 +248,35 @@ export default function Controls() {
           <div className="icons"><Settings size={36} /></div>
           <h1>Controls</h1>
         </div>
-        <p className="page-description">Configure detection, prevention, and display settings for both Network and Host systems.</p>
+        <p className="page-description">Configure detection, prevention, and display settings for Network and Host systems.</p>
 
-        {/* ═══ NETWORK SECTION ═══ */}
+        {/* ═══════════════════════ NETWORK SECTION ═══════════════════════ */}
         <div className="ctrl-section-divider">
-          <ShieldCheck size={18} /> Network Protection (IPS)
+          <ShieldCheck size={18} /> Network Protection (NIPS)
         </div>
 
-        {/* ── Cards Grid ── */}
         <div className="ctrl-grid">
-
-          {/* Card 1: IPS Prevention */}
+          {/* Network Intrusion Prevention Toggle */}
           <div className="ctrl-card">
             <div className="ctrl-card-header">
-              {prevention.enabled ? <ShieldCheck size={20} color="#22c55e" /> : <ShieldOff size={20} color="#6b7280" />}
-              <h3>Intrusion Prevention (IPS)</h3>
+              {prevention.enabled ? <ShieldCheck size={20} color="#22c55e" /> : <ShieldOff size={20} color="#ef4444" />}
+              <h3>Network Intrusion Prevention (NIPS)</h3>
             </div>
             <p className="ctrl-desc">
               {prevention.enabled
-                ? "IPS is active. IPs triggering 5+ alerts in 60s are auto-blocked via Windows Firewall."
-                : "IPS is disabled. Attacks are detected but not blocked."}
+                ? "Enabled — IPs triggering 5+ alerts in 60s are auto-blocked via Windows Firewall."
+                : "Disabled — Attacks are detected but not blocked."}
             </p>
             <button
-              className={`ctrl-toggle-btn ${prevention.enabled ? "active" : ""}`}
+              className={`ctrl-mode-btn ${prevention.enabled ? "selected" : ""}`}
+              style={{ marginTop: "8px", cursor: "pointer" }}
               onClick={togglePrevention}
             >
-              <span className={`ctrl-toggle-dot ${prevention.enabled ? "on" : ""}`} />
-              {prevention.enabled ? "Enabled" : "Disabled"}
+              {prevention.enabled ? <><ShieldCheck size={14} /> Enabled</> : <><ShieldOff size={14} /> Disabled</>}
             </button>
           </div>
 
-          {/* Card 2: Display Mode */}
+          {/* Alert Display Mode */}
           <div className="ctrl-card">
             <div className="ctrl-card-header">
               {displayMode === "full" ? <Eye size={20} color="#3b82f6" /> : <EyeOff size={20} color="#f97316" />}
@@ -377,10 +304,10 @@ export default function Controls() {
           </div>
         </div>
 
-        {/* Quick Actions Toggle */}
+        {/* Network Maintenance Actions */}
         <button className="ctrl-advanced-toggle" onClick={() => setShowQuickActions(!showQuickActions)}>
           <Trash2 size={14} />
-          Quick Actions
+          Network Maintenance
           {showQuickActions ? <ChevronUp size={14} /> : <ChevronDown size={14} />}
         </button>
 
@@ -400,74 +327,6 @@ export default function Controls() {
             </button>
           </div>
         )}
-
-        {/* ── Detection Thresholds ── */}
-        <div className="ctrl-section">
-          <div className="ctrl-section-header">
-            <SlidersHorizontal size={20} color="#3b82f6" />
-            <h2>Detection Thresholds</h2>
-          </div>
-
-          {/* Stage 1 */}
-          <div className="ctrl-slider-group">
-            <div className="ctrl-slider-label">
-              <span>Stage 1 — Attack Detection (Binary Model)</span>
-              <span className="ctrl-slider-value" style={{ color: "#3b82f6" }}>
-                {threshold.toFixed(2)}
-              </span>
-            </div>
-            <div className="ctrl-slider-row">
-              <input type="range" min="0.1" max="1.0" step="0.05"
-                value={thresholdInput}
-                onChange={(e) => setThresholdInput(e.target.value)}
-                className="ctrl-range blue"
-              />
-              <input type="number" min="0.1" max="1.0" step="0.05"
-                value={thresholdInput}
-                onChange={(e) => setThresholdInput(e.target.value)}
-                className="ctrl-number-input"
-              />
-            </div>
-            <p className="ctrl-hint">Minimum confidence to classify traffic as an attack. Higher = fewer false positives.</p>
-          </div>
-
-          {/* Advanced Toggle */}
-          <button className="ctrl-advanced-toggle" onClick={() => setShowAdvanced(!showAdvanced)}>
-            <Settings size={14} />
-            Advanced Settings
-            {showAdvanced ? <ChevronUp size={14} /> : <ChevronDown size={14} />}
-          </button>
-
-          {/* Stage 2 */}
-          {showAdvanced && (
-            <div className="ctrl-slider-group advanced">
-              <div className="ctrl-slider-label">
-                <span>Stage 2 — Attack Type Confidence (Classification Model)</span>
-                <span className="ctrl-slider-value" style={{ color: "#f97316" }}>
-                  {classThreshold.toFixed(2)}
-                </span>
-              </div>
-              <div className="ctrl-slider-row">
-                <input type="range" min="0.1" max="1.0" step="0.05"
-                  value={classThresholdInput}
-                  onChange={(e) => setClassThresholdInput(e.target.value)}
-                  className="ctrl-range orange"
-                />
-                <input type="number" min="0.1" max="1.0" step="0.05"
-                  value={classThresholdInput}
-                  onChange={(e) => setClassThresholdInput(e.target.value)}
-                  className="ctrl-number-input"
-                />
-              </div>
-              <p className="ctrl-hint">Minimum confidence for attack type classification. Below this threshold, the attack is labeled as detected but type is unknown.</p>
-            </div>
-          )}
-
-          {/* Apply Button */}
-          <button className={`ctrl-apply-btn ${saving ? "saved" : ""}`} onClick={applyThresholds}>
-            {saving ? "Saved" : "Apply Settings"}
-          </button>
-        </div>
 
         {/* ── Blocked IPs ── */}
         {prevention.blocked_ips.length > 0 && (
@@ -542,45 +401,35 @@ export default function Controls() {
           </div>
         )}
 
-        {/* ═══ HOST SECTION ═══ */}
+        {/* ═══════════════════════ HOST SECTION ═══════════════════════ */}
         <div className="ctrl-section-divider">
-          <Monitor size={18} /> Host Protection (Insider Threat)
+          <Monitor size={18} /> Host Protection (HIPS)
         </div>
 
-        {/* Host Prevention Toggle + Status */}
         <div className="ctrl-grid">
+          {/* Host Intrusion Prevention Toggle */}
           <div className="ctrl-card">
             <div className="ctrl-card-header">
-              {hostPrevention?.test_mode === false
-                ? <ShieldCheck size={20} color="#22c55e" />
-                : <ShieldOff size={20} color="#6b7280" />}
-              <h3>Host Prevention Mode</h3>
+              {hostPrevention?.test_mode === false ? <ShieldCheck size={20} color="#22c55e" /> : <ShieldOff size={20} color="#ef4444" />}
+              <h3>Host Intrusion Prevention (HIPS)</h3>
             </div>
             <p className="ctrl-desc">
               {hostPrevention?.test_mode === false
-                ? "LIVE MODE — Suspicious activity on host devices will trigger real OS-level actions (process kill, file lock, etc.)"
-                : "TEST MODE — Suspicious activity is logged but no real actions are taken. Safe for testing."}
+                ? "Enabled (Live Mode) — Suspicious host activity triggers real OS-level prevention actions."
+                : "Disabled (Test Mode) — Suspicious activity is logged but no real actions are taken."}
             </p>
-            <div className="ctrl-mode-switch">
-              <button
-                className={`ctrl-mode-btn ${hostPrevention?.test_mode !== false ? "selected" : ""}`}
-                onClick={async () => {
-                  try {
-                    await fetch(`${API_BASE}/api/prevention/mode`, {
-                      method: "POST",
-                      headers: { "Content-Type": "application/json" },
-                      body: JSON.stringify({ test_mode: true }),
-                    });
-                    fetchData();
-                  } catch (e) { console.error(e); }
-                }}
-              >
-                <EyeOff size={14} /> Test Mode
-              </button>
-              <button
-                className={`ctrl-mode-btn ${hostPrevention?.test_mode === false ? "selected" : ""}`}
-                onClick={() => {
-                  showConfirm("Enable LIVE Mode", "⚠️ Enable LIVE mode? This will execute real prevention actions on host devices.", async () => {
+            <button
+              className={`ctrl-mode-btn ${hostPrevention?.test_mode === false ? "selected" : ""}`}
+              style={{ marginTop: "8px", cursor: "pointer" }}
+              onClick={() => {
+                if (hostPrevention?.test_mode === false) {
+                  fetch(`${API_BASE}/api/prevention/mode`, {
+                    method: "POST",
+                    headers: { "Content-Type": "application/json" },
+                    body: JSON.stringify({ test_mode: true }),
+                  }).then(() => fetchData()).catch(() => {});
+                } else {
+                  showConfirm("Enable Host IPS (Live Mode)", "⚠️ Enable LIVE mode? This will execute real prevention actions on host devices.", async () => {
                     try {
                       await fetch(`${API_BASE}/api/prevention/mode`, {
                         method: "POST",
@@ -588,37 +437,37 @@ export default function Controls() {
                         body: JSON.stringify({ test_mode: false }),
                       });
                       fetchData();
-                    } catch (e) { console.error(e); }
+                    } catch { /* silent */ }
                     closeConfirm();
                   });
-                }}
-              >
-                <ShieldCheck size={14} /> Live Mode
-              </button>
-            </div>
+                }
+              }}
+            >
+              {hostPrevention?.test_mode === false ? <><ShieldCheck size={14} /> Enabled</> : <><ShieldOff size={14} /> Disabled</>}
+            </button>
           </div>
         </div>
 
-        {/* Host Quick Actions Toggle */}
+        {/* Host Maintenance Actions */}
         <button className="ctrl-advanced-toggle" onClick={() => setShowHostQuickActions(!showHostQuickActions)}>
           <Trash2 size={14} />
-          Host Quick Actions
+          Host Maintenance
           {showHostQuickActions ? <ChevronUp size={14} /> : <ChevronDown size={14} />}
         </button>
 
         {showHostQuickActions && (
           <div className="ctrl-actions" style={{ marginBottom: "16px", animation: "fadeSlideIn 0.3s ease" }}>
-            <button className="ctrl-action-btn archive" onClick={archiveHostLogs}>
-              <Archive size={14} /> Archive Host Logs
-            </button>
             <button className="ctrl-action-btn danger" onClick={clearHostLogs}>
-              <Trash2 size={14} /> Clear All Host Logs
+              <Trash2 size={14} /> Clear All Logs
+            </button>
+            <button className="ctrl-action-btn archive" onClick={archiveHostLogs}>
+              <Archive size={14} /> Archive Logs
             </button>
             <button
               className="ctrl-action-btn neutral"
               onClick={() => { setShowHostArchives(!showHostArchives); if (!showHostArchives) fetchHostArchives(); }}
             >
-              <Archive size={14} /> {showHostArchives ? "Hide" : "View"} Host Archives
+              <Archive size={14} /> {showHostArchives ? "Hide" : "View"} Archives
             </button>
           </div>
         )}
@@ -706,72 +555,6 @@ export default function Controls() {
             </div>
           </div>
         )}
-
-        {/* Host Threat Thresholds */}
-        <div className="ctrl-section">
-          <div className="ctrl-section-header">
-            <SlidersHorizontal size={20} color="#8b5cf6" />
-            <h2>Host Threat Thresholds</h2>
-          </div>
-          <p className="ctrl-hint" style={{ marginBottom: 16 }}>
-            When a device's risk score crosses these levels, different prevention actions are triggered.
-          </p>
-
-          <div className="ctrl-slider-group">
-            <div className="ctrl-slider-label">
-              <span>🟡 Low Risk — Log & Monitor</span>
-              <span className="ctrl-slider-value" style={{ color: "#f59e0b" }}>{hostThresholds.low}</span>
-            </div>
-            <div className="ctrl-slider-row">
-              <input type="range" min="0.1" max="0.6" step="0.05"
-                value={hostThresholds.low}
-                onChange={(e) => setHostThresholds(t => ({ ...t, low: e.target.value }))}
-                className="ctrl-range yellow" />
-              <input type="number" min="0.1" max="0.6" step="0.05"
-                value={hostThresholds.low}
-                onChange={(e) => setHostThresholds(t => ({ ...t, low: e.target.value }))}
-                className="ctrl-number-input" />
-            </div>
-          </div>
-
-          <div className="ctrl-slider-group">
-            <div className="ctrl-slider-label">
-              <span>🟠 Medium Risk — Restrict Access</span>
-              <span className="ctrl-slider-value" style={{ color: "#f97316" }}>{hostThresholds.medium}</span>
-            </div>
-            <div className="ctrl-slider-row">
-              <input type="range" min="0.4" max="0.85" step="0.05"
-                value={hostThresholds.medium}
-                onChange={(e) => setHostThresholds(t => ({ ...t, medium: e.target.value }))}
-                className="ctrl-range orange" />
-              <input type="number" min="0.4" max="0.85" step="0.05"
-                value={hostThresholds.medium}
-                onChange={(e) => setHostThresholds(t => ({ ...t, medium: e.target.value }))}
-                className="ctrl-number-input" />
-            </div>
-          </div>
-
-          <div className="ctrl-slider-group">
-            <div className="ctrl-slider-label">
-              <span>🔴 Critical Risk — Block & Isolate</span>
-              <span className="ctrl-slider-value" style={{ color: "#ef4444" }}>{hostThresholds.critical}</span>
-            </div>
-            <div className="ctrl-slider-row">
-              <input type="range" min="0.7" max="1.0" step="0.05"
-                value={hostThresholds.critical}
-                onChange={(e) => setHostThresholds(t => ({ ...t, critical: e.target.value }))}
-                className="ctrl-range red" />
-              <input type="number" min="0.7" max="1.0" step="0.05"
-                value={hostThresholds.critical}
-                onChange={(e) => setHostThresholds(t => ({ ...t, critical: e.target.value }))}
-                className="ctrl-number-input" />
-            </div>
-          </div>
-
-          <button className={`ctrl-apply-btn ${hostSaving ? "saved" : ""}`} onClick={applyHostThresholds}>
-            {hostSaving ? "Saved" : "Apply Host Thresholds"}
-          </button>
-        </div>
 
         {/* Recent Host Prevention Logs */}
         {hostLogs.length > 0 && (

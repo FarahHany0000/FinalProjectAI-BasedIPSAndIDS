@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useState, useCallback } from "react";
 import { useNavigate } from "react-router-dom";
 import Sidebar from "../Sidebar/Sidebar";
 import API_BASE from "../../config";
@@ -9,7 +9,7 @@ export default function AlertsPage() {
   const [alerts, setAlerts] = useState([]);
   const [agentEvents, setAgentEvents] = useState([]);
 
-  const fetchAlerts = async () => {
+  const fetchAlerts = useCallback(async () => {
     try {
       const [alertsRes, eventsRes] = await Promise.all([
         fetch(`${API_BASE}/api/alerts`),
@@ -28,23 +28,21 @@ export default function AlertsPage() {
           return merged.slice(0, 50);
         });
       }
-    } catch (err) {
-      console.error("Alerts fetch error:", err);
+    } catch {
+      // silent
     }
-  };
+  }, []);
 
   useEffect(() => {
     fetchAlerts();
-    const interval = setInterval(fetchAlerts, 5000);
+    const interval = setInterval(fetchAlerts, 30000);
 
     socket.on("new_alert", (alert) => {
       setAlerts(prev => [alert, ...prev].slice(0, 100));
     });
-
     socket.on("alert_status", (event) => {
       setAgentEvents(prev => [event, ...prev].slice(0, 50));
     });
-
     socket.on("prevention_reset", () => {
       setAgentEvents([]);
     });
@@ -55,7 +53,7 @@ export default function AlertsPage() {
       socket.off("alert_status");
       socket.off("prevention_reset");
     };
-  }, []);
+  }, [fetchAlerts]);
 
   const getEventIcon = (event) => {
     switch (event) {

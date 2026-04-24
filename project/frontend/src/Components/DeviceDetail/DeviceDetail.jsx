@@ -1,4 +1,4 @@
-import React, { useEffect, useState, useCallback } from "react";
+import React, { useEffect, useState, useCallback, useRef } from "react";
 import { useParams, useNavigate } from "react-router-dom";
 import Sidebar from "../Sidebar/Sidebar";
 import API_BASE from "../../config";
@@ -12,6 +12,7 @@ export default function DeviceDetail() {
   const [alerts, setAlerts] = useState([]);
   const [loading, setLoading] = useState(true);
   const [agentEvents, setAgentEvents] = useState([]);
+  const debounceRef = useRef(null);
 
   const fetchData = useCallback(async () => {
     try {
@@ -35,18 +36,23 @@ export default function DeviceDetail() {
           return merged.slice(0, 50);
         });
       }
-    } catch (err) {
-      console.error("Host detail fetch error:", err);
+    } catch {
+      // silent
     } finally {
       setLoading(false);
     }
   }, [host_name]);
 
+  const debouncedFetch = useCallback(() => {
+    if (debounceRef.current) clearTimeout(debounceRef.current);
+    debounceRef.current = setTimeout(fetchData, 2000);
+  }, [fetchData]);
+
   useEffect(() => {
     fetchData();
-    const interval = setInterval(fetchData, 15000);
+    const interval = setInterval(fetchData, 30000);
     socket.on("host_update", (data) => {
-      if (data.host_name === host_name) fetchData();
+      if (data.host_name === host_name) debouncedFetch();
     });
     socket.on("alert_status", (event) => {
       if (event.host_name === host_name) {
@@ -60,11 +66,12 @@ export default function DeviceDetail() {
     });
     return () => {
       clearInterval(interval);
+      if (debounceRef.current) clearTimeout(debounceRef.current);
       socket.off("host_update");
       socket.off("alert_status");
       socket.off("prevention_reset");
     };
-  }, [host_name, fetchData]);
+  }, [host_name, fetchData, debouncedFetch]);
 
   if (loading) {
     return (
@@ -161,7 +168,6 @@ export default function DeviceDetail() {
                 <tr>
                   <th>Time</th>
                   <th>Prediction</th>
-                  <th>Probability</th>
                   <th>Details</th>
                 </tr>
               </thead>
@@ -174,13 +180,12 @@ export default function DeviceDetail() {
                         {alert.threat || "Normal"}
                       </span>
                     </td>
-                    <td>{alert.confidence != null ? (alert.confidence * 100).toFixed(1) + "%" : "N/A"}</td>
                     <td style={{ maxWidth: "300px", overflow: "hidden", textOverflow: "ellipsis" }}>
                       {alert.details || "—"}
                     </td>
                   </tr>
                 )) : (
-                  <tr><td colSpan="4" className="empty-logs">No alerts for this device</td></tr>
+                  <tr><td colSpan="3" className="empty-logs">No alerts for this device</td></tr>
                 )}
               </tbody>
             </table>

@@ -1,4 +1,4 @@
-import React, { useEffect, useState, useCallback } from "react";
+import React, { useEffect, useState, useCallback, useRef } from "react";
 import { useParams, useNavigate } from "react-router-dom";
 import Sidebar from "../Sidebar/Sidebar";
 import API_BASE from "../../config";
@@ -120,6 +120,7 @@ export default function HostLogs() {
   const [timeline, setTimeline] = useState([]);
   const [alerts, setAlerts] = useState([]);
   const [loading, setLoading] = useState(true);
+  const debounceRef = useRef(null);
 
   const fetchData = useCallback(async () => {
     try {
@@ -135,28 +136,34 @@ export default function HostLogs() {
       setDetail(detailData);
       setTimeline(Array.isArray(timelineData) ? timelineData : []);
       setAlerts(Array.isArray(alertsData) ? alertsData : []);
-    } catch (err) {
-      console.error("Host detail fetch error:", err);
+    } catch {
+      // silent
     } finally {
       setLoading(false);
     }
   }, [host_name]);
 
+  const debouncedFetch = useCallback(() => {
+    if (debounceRef.current) clearTimeout(debounceRef.current);
+    debounceRef.current = setTimeout(fetchData, 2000);
+  }, [fetchData]);
+
   useEffect(() => {
     fetchData();
-    const interval = setInterval(fetchData, 15000);
+    const interval = setInterval(fetchData, 30000);
 
     socket.on("host_update", (data) => {
       if (data.host_name === host_name) {
-        fetchData();
+        debouncedFetch();
       }
     });
 
     return () => {
       clearInterval(interval);
+      if (debounceRef.current) clearTimeout(debounceRef.current);
       socket.off("host_update");
     };
-  }, [host_name, fetchData]);
+  }, [host_name, fetchData, debouncedFetch]);
 
   if (loading) {
     return (

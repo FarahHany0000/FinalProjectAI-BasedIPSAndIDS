@@ -141,7 +141,9 @@ NN_PARAMS = dict(
 # DETECTED & CONFIGURED for your system!
 # Run: python FIND_NETWORK_INTERFACE.py (to see all detected interfaces)
 
-DEFAULT_IFACE = "VMware Network Adapter VMnet1"
+DEFAULT_IFACE = "Local Area Connection* 10"
+# DEFAULT_IFACE = "VMware Network Adapter VMnet1"
+#DEFAULT_IFACE = "Wi-Fi"
 
 # ── Streamlit ────────────────────────────────────────────────────────────────
 STREAMLIT_PORT = 8501

@@ -12,14 +12,14 @@ export default function Agents() {
       const res = await fetch(`${API_BASE}/api/agents`);
       const data = await res.json();
       setAgents(data);
-    } catch (err) {
-      console.error("Agents fetch error:", err);
+    } catch {
+      // silent
     }
   };
 
   useEffect(() => {
     fetchAgents();
-    const interval = setInterval(fetchAgents, 10000);
+    const interval = setInterval(fetchAgents, 30000);
 
     socket.on("agent_update", (agent) => {
       setAgents(prev => {
@@ -75,8 +75,8 @@ export default function Agents() {
     try {
       await fetch(`${API_BASE}/api/agents/${id}/approve`, { method: "POST" });
       fetchAgents();
-    } catch (err) {
-      console.error("Approve error:", err);
+    } catch {
+      // silent
     }
   };
 
@@ -85,8 +85,8 @@ export default function Agents() {
     try {
       await fetch(`${API_BASE}/api/agents/${id}/reject`, { method: "POST" });
       fetchAgents();
-    } catch (err) {
-      console.error("Reject error:", err);
+    } catch {
+      // silent
     }
   };
 

@@ -13,14 +13,14 @@ export default function Host() {
       const res = await fetch(`${API_BASE}/api/hosts`);
       const data = await res.json();
       setHosts(data);
-    } catch (err) {
-      console.error("Fetch Error:", err);
+    } catch {
+      // silent
     }
   };
 
   useEffect(() => {
     fetchHosts();
-    const interval = setInterval(fetchHosts, 5000);
+    const interval = setInterval(fetchHosts, 30000);
 
     socket.on("host_update", (host) => {
       setHosts(prev => {
